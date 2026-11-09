@@ -327,6 +327,12 @@ fn sync_now_inner(app: &AppHandle) -> SyncStatus {
         Err(e) => {
             SYNC_DIRTY.store(true, Relaxed); // retry on the next tick
             let _ = store.set_setting("sync_error", e);
+            if e == cloud::SCOPE_MISSING || e == "google_relogin" || e == "google_signed_out" {
+                // retrying can't help: forget the account so Settings shows "Accedi con Google" again
+                cloud::logout();
+                let _ = store.set_setting("sync_email", "");
+                let _ = store.set_setting("sync_last", "");
+            }
         }
     }
     let status = sync_status_of(&store);

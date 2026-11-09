@@ -174,9 +174,10 @@
   "syncLogout": "Esci",
   "errGoogleNotConfigured": "Accesso con Google non configurato in questa versione (manca il client OAuth, vedi GOOGLE-SETUP.md).",
   "errGoogleTimeout": "Accesso non completato entro 5 minuti: riprova.",
-  "errGoogleRelogin": "L'accesso a Google è scaduto o è stato revocato: esci e accedi di nuovo.",
+  "errGoogleRelogin": "L'accesso a Google è scaduto o è stato revocato: premi di nuovo «Accedi con Google».",
   "errGoogleLogin": "Accesso a Google non riuscito: riprova.",
   "syncNoBrowser": "Il browser non si è aperto?",
   "syncCopyLink": "Copia il link di accesso",
-  "syncLinkCopied": "Link copiato: incollalo nel browser"
+  "syncLinkCopied": "Link copiato: incollalo nel browser",
+  "errGoogleScope": "Nella pagina di Google non è stata spuntata la casella per Google Drive, quindi Phrase X non può salvare le frasi. Premi di nuovo «Accedi con Google» e seleziona tutte le caselle (o «Seleziona tutto»)."
 }

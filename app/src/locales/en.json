@@ -174,9 +174,10 @@
   "syncLogout": "Sign out",
   "errGoogleNotConfigured": "Google sign-in is not configured in this build (OAuth client missing, see GOOGLE-SETUP.md).",
   "errGoogleTimeout": "Sign-in not completed within 5 minutes: try again.",
-  "errGoogleRelogin": "Google access expired or was revoked: sign out and sign in again.",
+  "errGoogleRelogin": "Google access expired or was revoked: click «Sign in with Google» again.",
   "errGoogleLogin": "Google sign-in failed: try again.",
   "syncNoBrowser": "Browser didn't open?",
   "syncCopyLink": "Copy the sign-in link",
-  "syncLinkCopied": "Link copied: paste it in your browser"
+  "syncLinkCopied": "Link copied: paste it in your browser",
+  "errGoogleScope": "The Google Drive checkbox was left unticked on Google's page, so Phrase X can't save your phrases. Click «Sign in with Google» again and tick every box (or «Select all»)."
 }

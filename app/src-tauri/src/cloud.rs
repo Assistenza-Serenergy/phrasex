@@ -52,9 +52,23 @@ fn agent() -> Res<ureq::Agent> {
 
 fn http(e: ureq::Error) -> String {
     match e {
-        ureq::Error::Status(code, r) => format!("HTTP {code}: {}", r.into_string().unwrap_or_default()),
+        ureq::Error::Status(code, r) => {
+            let body = r.into_string().unwrap_or_default();
+            if body.contains("ACCESS_TOKEN_SCOPE_INSUFFICIENT") {
+                return SCOPE_MISSING.into();
+            }
+            format!("HTTP {code}: {body}")
+        }
         e => e.to_string(),
     }
+}
+
+/// The user left Google's "Drive" checkbox unticked on the consent screen.
+pub const SCOPE_MISSING: &str = "google_scope_missing";
+const DRIVE_SCOPE: &str = "https://www.googleapis.com/auth/drive.appdata";
+
+fn has_drive(scope: Option<&str>) -> bool {
+    scope.map_or(true, |s| s.split_whitespace().any(|x| x == DRIVE_SCOPE)) // absent = unchanged grant
 }
 
 fn random(bytes: usize) -> Res<String> {
@@ -90,6 +104,7 @@ fn decode(s: &str) -> String {
 #[derive(Deserialize)]
 struct Token {
     access_token: String,
+    scope: Option<String>,
     refresh_token: Option<String>,
     id_token: Option<String>,
 }
@@ -124,6 +139,10 @@ pub fn login(open_browser: impl Fn(&str)) -> Res<String> {
         .map_err(http)?
         .into_json()
         .map_err(err)?;
+    if !has_drive(tok.scope.as_deref()) {
+        let _ = agent()?.post("https://oauth2.googleapis.com/revoke").send_form(&[("token", tok.access_token.as_str())]);
+        return Err(SCOPE_MISSING.into());
+    }
     credential()?.set_password(&tok.refresh_token.ok_or("google_no_refresh_token")?).map_err(err)?;
     Ok(tok.id_token.as_deref().and_then(email_from_id_token).unwrap_or_default())
 }
@@ -207,7 +226,13 @@ fn access_token(a: &ureq::Agent) -> Res<String> {
     let refresh = credential()?.get_password().map_err(|_| "google_signed_out".to_string())?;
     let form = [("client_id", id), ("client_secret", secret), ("refresh_token", refresh.as_str()), ("grant_type", "refresh_token")];
     match a.post(TOKEN_URL).send_form(&form) {
-        Ok(r) => Ok(r.into_json::<Token>().map_err(err)?.access_token),
+        Ok(r) => {
+            let tok = r.into_json::<Token>().map_err(err)?;
+            if !has_drive(tok.scope.as_deref()) {
+                return Err(SCOPE_MISSING.into());
+            }
+            Ok(tok.access_token)
+        }
         Err(ureq::Error::Status(400 | 401, _)) => Err("google_relogin".into()), // revoked or expired
         Err(e) => Err(http(e)),
     }
@@ -343,6 +368,9 @@ mod tests {
         assert_eq!(encode("http://127.0.0.1:5 a"), "http%3A%2F%2F127.0.0.1%3A5%20a");
         let jwt = format!("h.{}.s", B64.encode(br#"{"email":"me@example.com"}"#));
         assert_eq!(email_from_id_token(&jwt).as_deref(), Some("me@example.com"));
+        assert!(has_drive(Some("openid https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/userinfo.email")));
+        assert!(!has_drive(Some("openid https://www.googleapis.com/auth/userinfo.email")), "Drive box left unticked");
+        assert!(has_drive(None));
     }
 
     #[test]

@@ -30,6 +30,7 @@ export function errText(t: T, e: unknown): string {
   if (code === "admin_cancelled") return t("errAdminCancelled");
   if (code === "google_not_configured") return t("errGoogleNotConfigured");
   if (code === "google_login_timeout") return t("errGoogleTimeout");
+  if (code === "google_scope_missing") return t("errGoogleScope");
   if (code === "google_relogin" || code === "google_signed_out") return t("errGoogleRelogin");
   if (code.startsWith("google_login_failed")) return t("errGoogleLogin");
   return t("errGeneric", { msg: code });
