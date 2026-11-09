@@ -359,7 +359,10 @@ fn sync_status(state: State<AppState>) -> SyncStatus {
 /// Opens Google sign-in in the browser and waits (up to 5 minutes), then syncs at once.
 #[tauri::command(async)]
 fn sync_login(app: AppHandle) -> Res<SyncStatus> {
-    let email = cloud::login(phrasex_listener::open)?;
+    let email = cloud::login(|url| {
+        phrasex_listener::open_url(url);
+        let _ = app.emit("sync-login-url", url); // Settings offers "copy link" if no browser shows up
+    })?;
     {
         let state = app.state::<AppState>();
         let store = state.store.lock().unwrap();
@@ -368,6 +371,11 @@ fn sync_login(app: AppHandle) -> Res<SyncStatus> {
         store.set_setting("sync_error", "").map_err(err)?;
     }
     Ok(sync_now_inner(&app))
+}
+
+#[tauri::command]
+fn sync_cancel_login() {
+    cloud::CANCEL_LOGIN.store(true, Relaxed);
 }
 
 #[tauri::command(async)]
@@ -1407,7 +1415,7 @@ fn main() {
             settings, save_settings, running_apps, popup_insert, popup_hide, form_pending, form_submit,
             clips, clip_insert, clip_delete, clip_clear, clip_to_phrase, export_data, import_data, open_backups, install_autocorrect,
             trash, trash_restore, trash_delete, trash_clear, choice_pending, choice_pick, set_no_expand, set_recording_hotkey,
-            sync_status, sync_login, sync_logout, sync_now
+            sync_status, sync_login, sync_cancel_login, sync_logout, sync_now
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

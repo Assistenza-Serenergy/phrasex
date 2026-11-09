@@ -7,6 +7,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -21,6 +22,9 @@ const FILE_NAME: &str = "phrasex-library.json";
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 
 type Res<T> = Result<T, String>;
+
+/// Set by "Annulla" while the browser sign-in is pending.
+pub static CANCEL_LOGIN: AtomicBool = AtomicBool::new(false);
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -94,6 +98,7 @@ struct Token {
 /// Returns the account's email.
 pub fn login(open_browser: impl Fn(&str)) -> Res<String> {
     let (id, secret) = client()?;
+    CANCEL_LOGIN.store(false, Relaxed);
     let (verifier, state) = (random(32)?, random(16)?);
     let challenge = B64.encode(Sha256::digest(verifier.as_bytes()));
     let listener = TcpListener::bind("127.0.0.1:0").map_err(err)?;
@@ -136,6 +141,9 @@ fn wait_for_code(listener: &TcpListener, state: &str) -> Res<String> {
         let mut stream = match listener.accept() {
             Ok((s, _)) => s,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if CANCEL_LOGIN.load(Relaxed) {
+                    return Err("google_login_cancelled".into());
+                }
                 if Instant::now() > deadline {
                     return Err("google_login_timeout".into());
                 }

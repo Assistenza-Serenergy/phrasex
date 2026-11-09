@@ -162,7 +162,7 @@
   "errImportPhraseExpress": "This is an encrypted PhraseExpress file (.pexdb/.pxp) and can't be read. In PhraseExpress use Export → Text file and import the .txt.",
   "trashSelected": "{n} trashed items selected",
   "trashGroupHint": "Drag over the trash to select several rows, or Ctrl+click. Esc cancels.",
-  "settingsSync": "Cloud sync",
+  "settingsSync": "Google account and sync",
   "syncHint": "Sign in with Google to have the same library on all your PCs. Data is kept in a hidden Phrase X space on your Google Drive; if a phrase changes on two PCs, the most recent edit wins. Signing in with another Google account loads that account's library (Phrase X keeps a copy in the backups folder first).",
   "syncLogin": "Sign in with Google",
   "syncLoggingIn": "Finish signing in in the browser…",
@@ -175,5 +175,8 @@
   "errGoogleNotConfigured": "Google sign-in is not configured in this build (OAuth client missing, see GOOGLE-SETUP.md).",
   "errGoogleTimeout": "Sign-in not completed within 5 minutes: try again.",
   "errGoogleRelogin": "Google access expired or was revoked: sign out and sign in again.",
-  "errGoogleLogin": "Google sign-in cancelled or failed."
+  "errGoogleLogin": "Google sign-in failed: try again.",
+  "syncNoBrowser": "Browser didn't open?",
+  "syncCopyLink": "Copy the sign-in link",
+  "syncLinkCopied": "Link copied: paste it in your browser"
 }

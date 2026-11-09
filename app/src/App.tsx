@@ -50,8 +50,9 @@ const TrashIcon = (
 );
 const GearIcon = (
   <svg className="icon" viewBox="0 0 16 16" aria-hidden="true">
-    <circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.2" />
-    <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    {/* cog: thick dashed ring = teeth, ring = body */}
+    <circle cx="8" cy="8" r="5.9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeDasharray="2.3 2.33" />
+    <circle cx="8" cy="8" r="4.3" fill="none" stroke="currentColor" strokeWidth="1.9" />
   </svg>
 );
 
@@ -600,8 +601,8 @@ export default function App() {
           aria-label={t("search")}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <button className={view === "settings" ? "icon-button on" : "icon-button"} aria-label={t("settings")} title={t("settings")} onClick={() => setView(view === "settings" ? "library" : "settings")}>
-          {GearIcon}
+        <button className={view === "settings" ? "on" : undefined} onClick={() => setView(view === "settings" ? "library" : "settings")}>
+          {GearIcon}<span>{t("settings")}</span>
         </button>
       </header>
 

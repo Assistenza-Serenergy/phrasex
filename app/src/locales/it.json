@@ -162,7 +162,7 @@
   "errImportPhraseExpress": "Questo è un file di PhraseExpress cifrato (.pexdb/.pxp): non si può leggere. In PhraseExpress usa Export → Text file e importa il .txt.",
   "trashSelected": "{n} elementi del cestino selezionati",
   "trashGroupHint": "Trascina sul cestino per selezionare più righe, oppure Ctrl+clic. Esc annulla.",
-  "settingsSync": "Sincronizzazione cloud",
+  "settingsSync": "Account Google e sincronizzazione",
   "syncHint": "Accedi con Google per avere la stessa libreria su tutti i tuoi PC. I dati stanno in uno spazio nascosto di Phrase X sul tuo Google Drive; se una frase cambia su due PC vince la modifica più recente. Con un altro account Google ritrovi la libreria di quell'account (prima Phrase X fa una copia nella cartella backup).",
   "syncLogin": "Accedi con Google",
   "syncLoggingIn": "Completa l'accesso nel browser…",
@@ -175,5 +175,8 @@
   "errGoogleNotConfigured": "Accesso con Google non configurato in questa versione (manca il client OAuth, vedi GOOGLE-SETUP.md).",
   "errGoogleTimeout": "Accesso non completato entro 5 minuti: riprova.",
   "errGoogleRelogin": "L'accesso a Google è scaduto o è stato revocato: esci e accedi di nuovo.",
-  "errGoogleLogin": "Accesso a Google annullato o non riuscito."
+  "errGoogleLogin": "Accesso a Google non riuscito: riprova.",
+  "syncNoBrowser": "Il browser non si è aperto?",
+  "syncCopyLink": "Copia il link di accesso",
+  "syncLinkCopied": "Link copiato: incollalo nel browser"
 }

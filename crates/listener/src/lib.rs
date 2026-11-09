@@ -549,6 +549,15 @@ pub fn open(target: &str) {
     let _ = std::process::Command::new("explorer.exe").arg(target).spawn();
 }
 
+/// Opens a web page in the default browser (ShellExecute: works from an elevated Phrase X too,
+/// and keeps long URLs with `&` intact).
+pub fn open_url(url: &str) {
+    use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
+    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let (verb, target) = (wide("open"), wide(url));
+    unsafe { ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), target.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
+}
+
 /// True when Phrase X runs as administrator (UAC elevated): only then can it type into elevated windows.
 pub fn is_elevated() -> bool {
     unsafe { windows_sys::Win32::UI::Shell::IsUserAnAdmin() != 0 }

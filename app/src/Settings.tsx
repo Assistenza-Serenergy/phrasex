@@ -34,20 +34,28 @@ function CloudSync({ t }: { t: T }) {
   const [st, setSt] = useState<SyncStatus | null>(null);
   const [busy, setBusy] = useState<"login" | "sync" | null>(null);
   const [fail, setFail] = useState("");
+  const [loginUrl, setLoginUrl] = useState("");
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     void api.syncStatus().then(setSt);
     const un = listen<SyncStatus>("sync-status", (ev) => setSt(ev.payload));
-    return () => void un.then((f) => f());
+    const unUrl = listen<string>("sync-login-url", (ev) => setLoginUrl(ev.payload));
+    return () => {
+      void un.then((f) => f());
+      void unUrl.then((f) => f());
+    };
   }, []);
 
   async function run(kind: "login" | "sync" | "logout") {
     setFail("");
+    setLoginUrl("");
+    setCopied(false);
     setBusy(kind === "logout" ? null : kind);
     try {
       setSt(await (kind === "login" ? api.syncLogin() : kind === "sync" ? api.syncNow() : api.syncLogout()));
     } catch (e) {
-      setFail(errText(t, e));
+      if (String(e) !== "google_login_cancelled") setFail(errText(t, e));
     } finally {
       setBusy(null);
     }
@@ -62,11 +70,22 @@ function CloudSync({ t }: { t: T }) {
       {!st.configured ? (
         <p className="muted">{t("errGoogleNotConfigured")}</p>
       ) : !st.email ? (
-        <div className="row">
-          <button type="button" className="primary" disabled={busy !== null} onClick={() => void run("login")}>
-            {busy === "login" ? t("syncLoggingIn") : t("syncLogin")}
-          </button>
-        </div>
+        <>
+          <div className="row">
+            <button type="button" className="primary" disabled={busy !== null} onClick={() => void run("login")}>
+              {busy === "login" ? t("syncLoggingIn") : t("syncLogin")}
+            </button>
+            {busy === "login" ? <button type="button" onClick={() => void api.syncCancelLogin()}>{t("cancel")}</button> : null}
+          </div>
+          {busy === "login" && loginUrl ? (
+            <p className="muted">
+              {t("syncNoBrowser")}{" "}
+              <button type="button" onClick={() => void navigator.clipboard.writeText(loginUrl).then(() => setCopied(true))}>
+                {copied ? t("syncLinkCopied") : t("syncCopyLink")}
+              </button>
+            </p>
+          ) : null}
+        </>
       ) : (
         <>
           <p>
@@ -117,6 +136,8 @@ export function SettingsView({ initial, onSaved, onImported, t }: { initial: Set
 
   return (
     <form className="editor settings" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+      <CloudSync t={t} />
+
       <h2>{t("settingsGeneral")}</h2>
       <div className="row">
         <label className="field">
@@ -207,8 +228,6 @@ export function SettingsView({ initial, onSaved, onImported, t }: { initial: Set
           ))}
         </div>
       ) : null}
-
-      <CloudSync t={t} />
 
       <h2>{t("settingsData")}</h2>
       <p className="muted">{t("dataHint")}</p>

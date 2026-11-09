@@ -72,6 +72,7 @@ export const api = {
   openBackups: () => invoke<void>("open_backups"),
   syncStatus: () => invoke<SyncStatus>("sync_status"),
   syncLogin: () => invoke<SyncStatus>("sync_login"),
+  syncCancelLogin: () => invoke<void>("sync_cancel_login"),
   syncLogout: () => invoke<SyncStatus>("sync_logout"),
   syncNow: () => invoke<SyncStatus>("sync_now"),
   formSubmit: (answers: Record<string, string> | null) => invoke<void>("form_submit", { answers }),
