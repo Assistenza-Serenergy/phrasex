@@ -1,0 +1,27 @@
+[package]
+name = "phrasex-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+serde_json = "1"
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+phrasex-engine = { path = "../../crates/engine" }
+phrasex-store = { path = "../../crates/store" }
+phrasex-listener = { path = "../../crates/listener" }
+# cloud sync ("Accedi con Google"): HTTPS over Windows' own TLS, token in Credential Manager
+ureq = { version = "2", default-features = false, features = ["native-tls", "json"] }
+native-tls = "0.2"
+keyring = { version = "3", features = ["windows-native"] }
+sha2 = "0.10"
+base64 = "0.22"
+getrandom = "0.3"

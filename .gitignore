@@ -1,0 +1,12 @@
+/target
+node_modules/
+__pycache__/
+/app/dist
+# OAuth client (see GOOGLE-SETUP.md): compiled into the exe, never committed
+/app/src-tauri/google-oauth.json
+# binaries and local logs
+*.exe
+*.zip
+/Installer/
+/scripts/reinstall.log
+/app/src-tauri/phrasex-debug.log

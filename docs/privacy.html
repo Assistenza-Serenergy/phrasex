@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phrase X — Privacy</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <h1>Privacy</h1>
+  <p class="muted">Ultimo aggiornamento: 9 novembre 2026</p>
+
+  <h2>In breve</h2>
+  <p>Phrase X non ha server propri, non raccoglie statistiche e non invia i tuoi dati a nessuno.
+  Le tue frasi restano sul tuo PC e, se accedi con Google, nel tuo Google Drive.</p>
+
+  <h2>Dati sul tuo PC</h2>
+  <p>Frasi, cartelle, impostazioni, cronologia degli appunti e contatori di utilizzo sono salvati solo sul tuo computer
+  (cartella <code>%APPDATA%\PhraseX</code>). Phrase X legge ciò che digiti solo per riconoscere le abbreviazioni:
+  il testo digitato non viene salvato né trasmesso.</p>
+
+  <h2>Accedi con Google</h2>
+  <p>L'accesso con Google è facoltativo. Se lo usi, Phrase X chiede solo questi permessi:</p>
+  <ul>
+    <li><strong>Il tuo indirizzo email</strong> (<code>openid</code>, <code>email</code>): per mostrarti con quale account sei collegato.</li>
+    <li><strong>I propri dati di configurazione su Google Drive</strong> (<code>drive.appdata</code>): Phrase X salva la tua
+      libreria di frasi in un file dentro la cartella nascosta riservata all'app. Phrase X <em>non</em> può vedere né
+      modificare gli altri file del tuo Drive.</li>
+  </ul>
+  <p>I dati viaggiano direttamente tra il tuo PC e Google, cifrati (HTTPS). Il token di accesso è conservato in Gestione
+  credenziali di Windows sul tuo PC. Nessun altro, nemmeno gli sviluppatori di Phrase X, riceve o può leggere i tuoi dati.
+  L'uso dei dati ricevuti dalle API di Google rispetta le
+  <a href="https://developers.google.com/terms/api-services-user-data-policy">Norme relative ai dati utente dei servizi API di Google</a>,
+  inclusi i requisiti di uso limitato.</p>
+
+  <h2>Cancellare i dati</h2>
+  <ul>
+    <li><strong>Esci</strong> in Impostazioni: Phrase X dimentica l'account su quel PC e revoca l'accesso.</li>
+    <li>Per eliminare anche la copia su Drive: Google Drive → Impostazioni → Gestisci app → Phrase X → <em>Elimina dati app nascosti</em>.</li>
+    <li>Puoi revocare l'accesso in ogni momento da <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</li>
+  </ul>
+
+  <h2>Contatti</h2>
+  <p>Domande o segnalazioni: <a href="https://github.com/Assistenza-Serenergy/phrasex/issues">github.com/Assistenza-Serenergy/phrasex/issues</a>.</p>
+
+  <hr>
+  <div lang="en" class="muted">
+    <h2>English summary</h2>
+    <p>Phrase X has no servers and no telemetry. Your phrases stay on your PC and, if you sign in with Google, in your own
+    Google Drive. It requests only your email address (to show the signed-in account) and <code>drive.appdata</code>
+    (its own hidden app folder; it cannot see your other Drive files). Data goes directly between your PC and Google over
+    HTTPS; the token is kept in Windows Credential Manager. Use of information received from Google APIs adheres to the
+    Google API Services User Data Policy, including the Limited Use requirements. Sign out in Settings, delete the hidden
+    app data in Drive → Settings → Manage apps, or revoke access at myaccount.google.com/permissions.</p>
+  </div>
+
+  <nav>
+    <a href="index.html">Phrase X</a>
+    <a href="https://github.com/Assistenza-Serenergy/phrasex">Codice sorgente / Source code</a>
+  </nav>
+</main>
+</body>
+</html>

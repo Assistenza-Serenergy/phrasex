@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "windows": [
+    "main",
+    "popup",
+    "form"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}

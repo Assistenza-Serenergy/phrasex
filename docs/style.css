@@ -1,0 +1,11 @@
+:root { --ink: #111; --paper: #fff; --muted: #555; --line: #ddd; color-scheme: light; }
+@media (prefers-color-scheme: dark) { :root { --ink: #f2f2f2; --paper: #0b0b0b; --muted: #aaa; --line: #333; color-scheme: dark; } }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.6 system-ui, "Segoe UI", sans-serif; }
+main { max-width: 42rem; margin: 0 auto; padding: 3rem 1.25rem 4rem; }
+h1, h2 { font-family: Georgia, "Times New Roman", serif; font-weight: 600; line-height: 1.2; }
+h1 { font-size: 2.4rem; margin: 0 0 .5rem; }
+h2 { font-size: 1.35rem; margin: 2.2rem 0 .5rem; }
+a { color: inherit; }
+.muted { color: var(--muted); }
+nav { display: flex; gap: 1.25rem; flex-wrap: wrap; border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1rem; font-size: .95rem; }
+ul { padding-left: 1.2rem; }
