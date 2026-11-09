@@ -213,10 +213,11 @@ pub struct Plan {
     pub apply: bool,
 }
 
-/// `first` = this PC never synced: if the cloud already has a library, untouched example phrases are dropped.
-pub fn plan(local: &Library, remote: Option<&Library>, first: bool) -> Plan {
+/// `adopt_cloud`: if the cloud already has a library, it replaces the local one instead of merging
+/// (a new PC with only the untouched examples, or another Google account signed in on this PC).
+pub fn plan(local: &Library, remote: Option<&Library>, adopt_cloud: bool) -> Plan {
     let empty = Library::default();
-    let mine = if first && remote.is_some() && local.is_pristine() { &empty } else { local };
+    let mine = if adopt_cloud && remote.is_some() { &empty } else { local };
     let merged = merge(mine, remote.unwrap_or(&empty));
     Plan { upload: remote.map_or(true, |r| merge(r, &empty) != merged), apply: merged != *local, merged }
 }
@@ -352,5 +353,12 @@ mod tests {
         // already synced PC keeps even untouched examples (they are in the cloud too)
         let p = plan(&seed, Some(&cloud), false);
         assert!(p.upload && p.apply && p.merged.snippets.len() == 2);
+        // another account signed in: its cloud library replaces the local one
+        let other = Library { snippets: vec![snippet("other", "2026-11-09 11:00:00.000")], ..Default::default() };
+        let p = plan(&other, Some(&cloud), true);
+        assert_eq!((p.merged, p.upload, p.apply), (cloud.clone(), false, true));
+        // ...but an empty cloud gets the local library
+        let p = plan(&other, None, true);
+        assert_eq!((p.merged, p.upload, p.apply), (other, true, false));
     }
 }

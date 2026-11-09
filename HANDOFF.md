@@ -28,7 +28,12 @@ Open-source text expander (clean-room alternative to PhraseExpress) for X Holdin
 - `app/src-tauri/src/cloud.rs`: OAuth loopback+PKCE (scopes openid email drive.appdata), refresh token in Credential Manager via `keyring` ("Phrase X"/"google-refresh-token"), Drive file `phrasex-library.json` in appDataFolder (ureq + native-tls/schannel), `plan()` decides upload/apply.
 - main.rs: `sync_loop` thread (at start, ≤1 min after a change via `SYNC_DIRTY` set in `reload`, every 5 min), commands sync_status/login/logout/now, events `sync-status` and `library-changed`. Apply happens under the store lock, `reload` then runs on the main thread (hotkey registration needs it: never call reload off-main while holding the store lock).
 - OAuth client: `app/src-tauri/google-oauth.json` (Google's "Download JSON" for a Desktop client) read by build.rs into `PHRASEX_GOOGLE_CLIENT_ID/SECRET`; missing = "non configurato". Setup guide: GOOGLE-SETUP.md.
+- Account switch: setting `sync_account` = account whose library is local (kept on sign-out). Signing in with another account → backup `backups\phrasex-cambio-account-<date>.db`, then that account's cloud library replaces the local one (`plan(adopt_cloud)`); an empty cloud gets the local library.
+- Google Cloud project `phrase-x` (account spagnuolomarco01@gmail.com): External, **In production**, non-sensitive scopes only (no user cap, no verification; users may see "app not verified"). Branding: home https://assistenza-serenergy.github.io/phrasex/, privacy …/privacy.html, authorized domain assistenza-serenergy.github.io.
 - Known limits: no conditional upload (two PCs in the same second can lose one round, re-sent next round); tombstones never pruned; settings are not synced.
+
+## GitHub (2026-11-09)
+- Public repo https://github.com/Assistenza-Serenergy/phrasex (gh logged in as Assistenza-Serenergy), branch main, GitHub Pages from /docs (website + privacy). After each change: commit and `git push`. Binaries, Installer/, google-oauth.json are gitignored; publish installers as GitHub Releases only if the user asks.
 
 ## Build (Git Bash)
 - PATH="$HOME/.cargo/bin:/c/Program Files/nodejs:/c/Windows/System32:/c/Windows" (Git's /usr/bin/link shadows MSVC link.exe).

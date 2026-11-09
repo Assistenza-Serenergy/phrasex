@@ -163,7 +163,7 @@
   "trashSelected": "{n} elementi del cestino selezionati",
   "trashGroupHint": "Trascina sul cestino per selezionare più righe, oppure Ctrl+clic. Esc annulla.",
   "settingsSync": "Sincronizzazione cloud",
-  "syncHint": "Accedi con Google per avere la stessa libreria su tutti i tuoi PC. I dati stanno in uno spazio nascosto di Phrase X sul tuo Google Drive; se una frase cambia su due PC vince la modifica più recente.",
+  "syncHint": "Accedi con Google per avere la stessa libreria su tutti i tuoi PC. I dati stanno in uno spazio nascosto di Phrase X sul tuo Google Drive; se una frase cambia su due PC vince la modifica più recente. Con un altro account Google ritrovi la libreria di quell'account (prima Phrase X fa una copia nella cartella backup).",
   "syncLogin": "Accedi con Google",
   "syncLoggingIn": "Completa l'accesso nel browser…",
   "syncAccount": "Connesso come {email}",

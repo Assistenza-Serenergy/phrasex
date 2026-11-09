@@ -265,12 +265,17 @@ fn sync_status_of(store: &Store) -> SyncStatus {
 /// Download, merge (newest edit per phrase wins), upload if the cloud is behind, apply if this PC is behind.
 fn sync_round(app: &AppHandle) -> Res<()> {
     let state = app.state::<AppState>();
-    let (local, first) = {
+    let (local, adopt, switched) = {
         let store = state.store.lock().unwrap();
-        (store.sync_snapshot().map_err(err)?, store.setting("sync_last").ok().flatten().unwrap_or_default().is_empty())
+        let get = |k: &str| store.setting(k).ok().flatten().unwrap_or_default();
+        let local = store.sync_snapshot().map_err(err)?;
+        // the local library belongs to another Google account: this account's cloud library replaces it
+        let switched = !get("sync_account").is_empty() && !get("sync_account").eq_ignore_ascii_case(&get("sync_email"));
+        let adopt = get("sync_last").is_empty() && (local.is_pristine() || switched);
+        (local, adopt, switched)
     };
     let mut drive = cloud::Drive::connect()?; // network without holding the store lock
-    let plan = cloud::plan(&local, drive.download()?.as_ref(), first);
+    let plan = cloud::plan(&local, drive.download()?.as_ref(), adopt);
     if plan.upload {
         drive.upload(&plan.merged)?;
     }
@@ -280,6 +285,12 @@ fn sync_round(app: &AppHandle) -> Res<()> {
         let changed_meanwhile = now != local;
         // edits made during the download are newer: they win and go up on the next round
         let target = if changed_meanwhile { phrasex_store::sync::merge(&now, &plan.merged) } else { plan.merged };
+        if switched {
+            // the previous account's library is in its own cloud; keep a local copy too
+            let dir = data_dir().join("backups");
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = store.backup_to(&dir.join(format!("phrasex-cambio-account-{}.db", today())));
+        }
         store.apply_sync(&target).map_err(err)?;
         drop(store);
         // reload registers hotkeys on the main thread: never from here while holding the store lock
@@ -310,6 +321,8 @@ fn sync_now_inner(app: &AppHandle) -> SyncStatus {
             let when = format!("{:04}-{:02}-{:02} {:02}:{:02}", t.year, t.month, t.day, t.hour, t.minute);
             let _ = store.set_setting("sync_last", &when);
             let _ = store.set_setting("sync_error", "");
+            // whose library this PC now holds (kept on sign-out, compared on the next sign-in)
+            let _ = store.set_setting("sync_account", &store.setting("sync_email").ok().flatten().unwrap_or_default());
         }
         Err(e) => {
             SYNC_DIRTY.store(true, Relaxed); // retry on the next tick
