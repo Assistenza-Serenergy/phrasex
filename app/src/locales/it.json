@@ -11,7 +11,7 @@
   "emptyHint": "Seleziona una frase a sinistra o creane una nuova.",
   "folderName": "Nome cartella",
   "name": "Descrizione",
-  "body": "Testo della frase",
+  "body": "Contenuto della frase",
   "insertMacro": "Inserisci:",
   "macroDate": "Data",
   "macroTime": "Ora",
@@ -128,7 +128,7 @@
   "runAsAdmin": "Avvia come amministratore",
   "runAsAdminHint": "Serve per espandere le frasi anche nei programmi aperti come amministratore. Windows chiede il permesso solo quando attivi o disattivi questa opzione; Phrase X si riavvia da solo.",
   "errAdminCancelled": "Permesso di amministratore non concesso: opzione non cambiata.",
-  "ctxDeleteSelected": "Elimina selezionati",
+  "ctxDeleteSelected": "Elimina",
   "selectedCount": "{n} elementi selezionati",
   "moveTo": "Sposta in",
   "moveHere": "Sposta",
@@ -175,5 +175,6 @@
   "shareAdd": "email@esempio.it",
   "readOnly": "Condivisa con te: sola lettura",
   "errSharedReadOnly": "Le frasi condivise con te non si possono modificare.",
-  "errSharingNotConfigured": "La condivisione non è ancora configurata."
+  "errSharingNotConfigured": "La condivisione non è ancora configurata.",
+  "ctxSortAZ": "Ordina A-Z"
 }

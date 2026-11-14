@@ -38,6 +38,8 @@ pub struct SyncSnippet {
     pub case_sensitive: bool,
     pub enabled: bool,
     pub hotkey: Option<String>,
+    #[serde(default)] // documents written before manual order
+    pub position: Option<i64>,
     pub tags: Vec<String>,
     pub updated_at: String,
 }
@@ -129,7 +131,7 @@ impl Store {
             .query_map([], |r| Ok(SyncFolder { uid: r.get(0)?, parent: r.get(1)?, name: r.get(2)?, updated_at: r.get(3)?, hotkey: r.get(4)? }))?
             .collect::<Result<_>>()?;
         let mut st = self.db.prepare(
-            "SELECT s.id, s.uid, f.uid, s.name, s.trigger, s.body, s.mode, s.case_sensitive, s.enabled, s.hotkey, s.updated_at
+            "SELECT s.id, s.uid, f.uid, s.name, s.trigger, s.body, s.mode, s.case_sensitive, s.enabled, s.hotkey, s.updated_at, s.position
              FROM snippet s LEFT JOIN folder f ON f.id = s.folder_id WHERE s.shared IS NULL ORDER BY s.uid",
         )?;
         let rows: Vec<(i64, SyncSnippet)> = st
@@ -146,6 +148,7 @@ impl Store {
                         case_sensitive: r.get(7)?,
                         enabled: r.get(8)?,
                         hotkey: r.get(9)?,
+                        position: r.get(11)?,
                         tags: vec![],
                         updated_at: r.get(10)?,
                     },
@@ -182,11 +185,11 @@ impl Store {
             let folder = s.folder.as_deref().and_then(|u| ids.get(u)).copied();
             let mode = if s.immediate { "immediate" } else { "word" };
             tx.execute(
-                "INSERT INTO snippet (uid, folder_id, name, trigger, body, mode, case_sensitive, enabled, hotkey, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                "INSERT INTO snippet (uid, folder_id, name, trigger, body, mode, case_sensitive, enabled, hotkey, updated_at, position)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT(uid) DO UPDATE SET folder_id = ?2, name = ?3, trigger = ?4, body = ?5, mode = ?6,
-                   case_sensitive = ?7, enabled = ?8, hotkey = ?9, updated_at = ?10",
-                params![s.uid, folder, s.name, s.trigger, s.body, mode, s.case_sensitive, s.enabled, s.hotkey, s.updated_at],
+                   case_sensitive = ?7, enabled = ?8, hotkey = ?9, updated_at = ?10, position = ?11",
+                params![s.uid, folder, s.name, s.trigger, s.body, mode, s.case_sensitive, s.enabled, s.hotkey, s.updated_at, s.position],
             )?;
             let id: i64 = tx.query_row("SELECT id FROM snippet WHERE uid = ?1", [&s.uid], |r| r.get(0))?;
             write_tags(&tx, id, &s.tags)?;
@@ -233,8 +236,8 @@ impl Store {
             for s in &sh.library.snippets {
                 let folder = s.folder.as_deref().and_then(|u| ids.get(u)).copied().unwrap_or(root);
                 tx.execute(
-                    "INSERT INTO snippet (uid, folder_id, name, trigger, body, mode, case_sensitive, enabled, updated_at, shared)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    "INSERT INTO snippet (uid, folder_id, name, trigger, body, mode, case_sensitive, enabled, updated_at, shared, position)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                     params![
                         format!("s:{}:{}", sh.owner, s.uid),
                         folder,
@@ -245,7 +248,8 @@ impl Store {
                         s.case_sensitive,
                         s.enabled,
                         s.updated_at,
-                        sh.owner
+                        sh.owner,
+                        s.position
                     ],
                 )?;
             }
@@ -292,6 +296,25 @@ mod tests {
         s.delete_folder(f).unwrap();
         let gone: Vec<String> = s.sync_snapshot().unwrap().tombstones.into_iter().map(|t| t.uid).collect();
         assert!(gone.contains(&a_uid) && gone.contains(&snap.folders[0].uid), "cascade wrote tombstones: {gone:?}");
+    }
+
+    #[test]
+    fn manual_order_then_back_to_alphabetical_and_synced() {
+        let mut pc1 = Store::open_in_memory().unwrap();
+        let f = pc1.add_folder(None, "F").unwrap();
+        let ids: Vec<i64> = ["a", "b", "c"].iter().map(|n| pc1.save(&Entry::new(Some(f), n, "", "x")).unwrap()).collect();
+        let names = |s: &Store| s.entries().unwrap().into_iter().map(|e| e.name).collect::<Vec<_>>();
+        pc1.reorder(&[ids[2], ids[0], ids[1]]).unwrap();
+        assert_eq!(names(&pc1), ["c", "a", "b"]);
+        let mut pc2 = Store::open_in_memory().unwrap();
+        pc2.apply_sync(&pc1.sync_snapshot().unwrap()).unwrap();
+        assert_eq!(names(&pc2), ["c", "a", "b"], "order travels with sync");
+        let mut moved = pc1.entries().unwrap().into_iter().find(|e| e.name == "c").unwrap();
+        moved.folder_id = None;
+        pc1.save(&moved).unwrap(); // another folder: its old place means nothing there
+        assert_eq!(pc1.entries().unwrap().iter().find(|e| e.name == "c").unwrap().folder_id, None);
+        pc1.sort_folder(Some(f)).unwrap();
+        assert_eq!(names(&pc1), ["a", "b", "c"]);
     }
 
     #[test]

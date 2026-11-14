@@ -482,8 +482,10 @@ fn sync_login(app: AppHandle) -> Res<SyncStatus> {
     for _ in 0..15 {
         std::thread::sleep(Duration::from_millis(200));
         if phrasex_listener::close_tab_titled(cloud::LOGIN_DONE_TITLE) {
+            diag("login tab: ctrl+w sent");
             break;
         }
+        diag(&format!("login tab: focused {}", phrasex_listener::foreground_exe()));
     }
     let h = app.clone();
     let _ = app.run_on_main_thread(move || {
@@ -594,6 +596,24 @@ fn save_entry(app: AppHandle, state: State<AppState>, entry: EntryDto) -> Res<i6
         return Err(format!("hotkey_unavailable:{id}"));
     }
     Ok(id)
+}
+
+/// Manual order of one folder's phrases (dragged in the tree).
+#[tauri::command]
+fn reorder_entries(app: AppHandle, state: State<AppState>, ids: Vec<i64>) -> Res<()> {
+    let mut store = state.store.lock().unwrap();
+    own_only(&store, &ids, &[])?;
+    store.reorder(&ids).map_err(err)?;
+    reload(&app, &store).map(drop)
+}
+
+/// "Ordina A-Z" on a folder: its phrases go back to alphabetical order.
+#[tauri::command]
+fn sort_folder(app: AppHandle, state: State<AppState>, folder_id: Option<i64>) -> Res<()> {
+    let store = state.store.lock().unwrap();
+    own_only(&store, &[], &[folder_id])?;
+    store.sort_folder(folder_id).map_err(err)?;
+    reload(&app, &store).map(drop)
 }
 
 #[tauri::command]
@@ -1612,7 +1632,7 @@ fn main() {
             recording: AtomicBool::new(false),
         })
         .invoke_handler(tauri::generate_handler![
-            library, save_entry, delete_entry, add_folder, rename_folder, set_folder_hotkey, move_folder, delete_folder, set_paused,
+            library, save_entry, delete_entry, add_folder, rename_folder, set_folder_hotkey, reorder_entries, sort_folder, move_folder, delete_folder, set_paused,
             settings, save_settings, running_apps, popup_insert, popup_hide, form_pending, form_submit,
             clips, clip_insert, clip_delete, clip_clear, clip_to_phrase, export_data, import_data, open_backups, install_autocorrect,
             trash, trash_restore, trash_delete, trash_clear, choice_pending, choice_pick, set_no_expand, set_recording_hotkey,

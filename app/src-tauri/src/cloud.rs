@@ -482,6 +482,7 @@ mod tests {
             case_sensitive: false,
             enabled: true,
             hotkey: None,
+            position: None,
             tags: vec![],
             updated_at: at.into(),
         }

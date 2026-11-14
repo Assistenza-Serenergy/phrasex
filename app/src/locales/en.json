@@ -11,7 +11,7 @@
   "emptyHint": "Select a phrase on the left or create a new one.",
   "folderName": "Folder name",
   "name": "Description",
-  "body": "Phrase text",
+  "body": "Phrase content",
   "insertMacro": "Insert:",
   "macroDate": "Date",
   "macroTime": "Time",
@@ -128,7 +128,7 @@
   "runAsAdmin": "Run as administrator",
   "runAsAdminHint": "Needed to expand phrases in programs running as administrator too. Windows asks for permission only when you turn this on or off; Phrase X restarts by itself.",
   "errAdminCancelled": "Administrator permission not granted: setting unchanged.",
-  "ctxDeleteSelected": "Delete selected",
+  "ctxDeleteSelected": "Delete",
   "selectedCount": "{n} items selected",
   "moveTo": "Move to",
   "moveHere": "Move",
@@ -175,5 +175,6 @@
   "shareAdd": "email@example.com",
   "readOnly": "Shared with you: read-only",
   "errSharedReadOnly": "Phrases shared with you can't be changed.",
-  "errSharingNotConfigured": "Sharing is not set up yet."
+  "errSharingNotConfigured": "Sharing is not set up yet.",
+  "ctxSortAZ": "Sort A-Z"
 }

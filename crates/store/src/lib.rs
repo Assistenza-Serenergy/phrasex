@@ -8,7 +8,10 @@ pub use rusqlite::{Error, Result};
 pub mod sync;
 
 /// Schema migrations, applied in order; `PRAGMA user_version` = number applied.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9];
+
+/// Manual order of the phrases inside a folder (dragged by the user); NULL = alphabetical, after the placed ones.
+const V9: &str = "ALTER TABLE snippet ADD COLUMN position INTEGER;";
 
 /// Libraries other people share with this user: read-only copies, `shared` = the owner's id.
 /// They never go into this user's sync (no tombstones, not in the snapshot).
@@ -301,11 +304,31 @@ impl Store {
         self.db.execute(
             &format!(
                 "UPDATE snippet SET folder_id = ?1, name = ?2, trigger = ?3, body = ?4, mode = ?5,
-                 case_sensitive = ?6, enabled = ?7, hotkey = ?8, updated_at = {NOW} WHERE id = ?9"
+                 case_sensitive = ?6, enabled = ?7, hotkey = ?8, updated_at = {NOW},
+                 position = CASE WHEN folder_id IS ?1 THEN position END WHERE id = ?9"
             ),
             params![e.folder_id, e.name, e.trigger, e.body, mode, e.case_sensitive, e.enabled, e.hotkey, e.id],
         )?;
         Ok(e.id)
+    }
+
+    /// Puts these phrases (one folder's) in this order.
+    pub fn reorder(&mut self, ids: &[i64]) -> Result<()> {
+        let tx = self.db.transaction()?;
+        for (i, id) in ids.iter().enumerate() {
+            tx.execute(&format!("UPDATE snippet SET position = ?2, updated_at = {NOW} WHERE id = ?1"), params![id, i as i64])?;
+        }
+        tx.commit()
+    }
+
+    /// Back to alphabetical order inside a folder (None = top level).
+    pub fn sort_folder(&self, folder: Option<i64>) -> Result<()> {
+        self.db
+            .execute(
+                &format!("UPDATE snippet SET position = NULL, updated_at = {NOW} WHERE folder_id IS ?1 AND position IS NOT NULL"),
+                params![folder],
+            )
+            .map(drop)
     }
 
     pub fn delete(&self, id: i64) -> Result<()> {
@@ -315,7 +338,7 @@ impl Store {
     pub fn entries(&self) -> Result<Vec<Entry>> {
         let mut st = self.db.prepare(
             "SELECT id, folder_id, name, trigger, body, mode, case_sensitive, enabled, hotkey
-             FROM snippet ORDER BY name COLLATE NOCASE",
+             FROM snippet ORDER BY position IS NULL, position, name COLLATE NOCASE",
         )?;
         let rows = st.query_map([], entry)?;
         rows.collect()

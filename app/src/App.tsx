@@ -435,6 +435,28 @@ export default function App() {
     return items.some((i) => parentOf(i) !== folderId);
   }
 
+  /** Dragged phrase dropped before/after another phrase of the same folder: manual order. */
+  async function reorder(id: number, targetId: number, after: boolean, folderId: number | null) {
+    const ids = (tree.entries.get(folderId) ?? []).map((e) => e.id).filter((x) => x !== id);
+    ids.splice(ids.indexOf(targetId) + (after ? 1 : 0), 0, id);
+    try {
+      await api.reorderEntries(ids);
+      await refresh();
+    } catch (e) {
+      fail(e);
+    }
+  }
+
+  /** "Ordina A-Z": the folder's phrases go back to alphabetical order. */
+  async function sortFolder(folderId: number | null) {
+    try {
+      await api.sortFolder(folderId);
+      await refresh();
+    } catch (e) {
+      fail(e);
+    }
+  }
+
   async function moveTo(items: Item[], folderId: number | null) {
     const l = await saveCurrent();
     if (!l) return;
@@ -516,8 +538,33 @@ export default function App() {
         dragged.current = null;
         setDropKey(null);
       },
-      onDragOver: (e) => dragOver(e, dropFolder, key),
-      onDrop: (e) => drop(e, dropFolder),
+      onDragOver: (e) => {
+        // one phrase over another phrase of its own folder: drop line above/below it (manual order)
+        const d = dragged.current;
+        if (item?.kind === "entry" && d?.length === 1 && d[0].kind === "entry" && d[0].id !== item.id && parentOf(d[0]) === dropFolder && !isShared(item)) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = "move";
+          const r = e.currentTarget.getBoundingClientRect();
+          const k = (e.clientY < r.top + r.height / 2 ? "b" : "a") + item.id;
+          if (dropKey !== k) setDropKey(k);
+          return;
+        }
+        dragOver(e, dropFolder, key);
+      },
+      onDrop: (e) => {
+        const d = dragged.current?.[0];
+        if (item?.kind === "entry" && d && dropKey && /^[ab]\d/.test(dropKey)) {
+          e.preventDefault();
+          e.stopPropagation();
+          const after = dropKey[0] === "a";
+          dragged.current = null;
+          setDropKey(null);
+          void reorder(d.id, item.id, after, dropFolder);
+          return;
+        }
+        drop(e, dropFolder);
+      },
     };
   };
 
@@ -556,6 +603,7 @@ export default function App() {
         null,
         mi("ctxImport", () => fileRef.current?.click()),
         mi("ctxExportAll", () => exportData()),
+        mi("ctxSortAZ", () => sortFolder(null)),
       ];
     }
     if (target.kind === "folder") {
@@ -567,6 +615,7 @@ export default function App() {
         mi("ctxRename", () => rename(target)),
         moveItem,
         mi("ctxExportFolder", () => exportData(target.id)),
+        mi("ctxSortAZ", () => sortFolder(target.id)),
         null,
         mi("delete", () => remove(target)),
       ];
@@ -759,7 +808,7 @@ export default function App() {
             <>
               {(tree.folders.get(null) ?? []).map((f) => <TreeFolder key={f.id} folder={f} depth={0} {...treeProps} />)}
               {(tree.entries.get(null) ?? []).map((e) => (
-                <EntryRow key={e.id} entry={e} depth={0} selected={isSel("entry", e.id)} onSelect={select} attrs={rowAttrs({ kind: "entry", id: e.id }, null)} t={t} />
+                <EntryRow key={e.id} entry={e} depth={0} selected={isSel("entry", e.id)} onSelect={select} attrs={rowAttrs({ kind: "entry", id: e.id }, null)} drop={dropSide(dropKey, e.id)} t={t} />
               ))}
               <TrashNode
                 items={trash}
@@ -829,7 +878,12 @@ export default function App() {
               </label>
               {readOnly ? null : <p className="muted">{t("folderHotkeyHint")}</p>}
               <div className="row end">
-                {readOnly ? <span className="muted">{t("readOnly")}</span> : <button className="primary" type="submit" disabled={!folderDirty}>{t("save")}</button>}
+                {readOnly ? <span className="muted">{t("readOnly")}</span> : (
+                  <>
+                    <button type="button" onClick={() => void sortFolder(selectedFolder.id)}>{t("ctxSortAZ")}</button>
+                    <button className="primary" type="submit" disabled={!folderDirty}>{t("save")}</button>
+                  </>
+                )}
               </div>
               </fieldset>
             </form>
@@ -1054,7 +1108,7 @@ function TreeFolder({ folder, depth, ...p }: TreeProps & { folder: Folder; depth
         <>
           {(p.tree.folders.get(folder.id) ?? []).map((f) => <TreeFolder key={f.id} folder={f} depth={depth + 1} {...p} />)}
           {(p.tree.entries.get(folder.id) ?? []).map((e) => (
-            <EntryRow key={e.id} entry={e} depth={depth + 1} selected={p.isSel("entry", e.id)} onSelect={p.onSelect} attrs={p.row({ kind: "entry", id: e.id }, folder.id)} t={p.t} />
+            <EntryRow key={e.id} entry={e} depth={depth + 1} selected={p.isSel("entry", e.id)} onSelect={p.onSelect} attrs={p.row({ kind: "entry", id: e.id }, folder.id)} drop={dropSide(p.dropKey, e.id)} t={p.t} />
           ))}
         </>
       ) : null}
@@ -1062,10 +1116,14 @@ function TreeFolder({ folder, depth, ...p }: TreeProps & { folder: Folder; depth
   );
 }
 
-type EntryRowProps = { entry: Entry; depth: number; selected: boolean; onSelect: (s: Sel) => void; attrs: HTMLAttributes<HTMLDivElement>; t: T };
+type EntryRowProps = { entry: Entry; depth: number; selected: boolean; onSelect: (s: Sel) => void; attrs: HTMLAttributes<HTMLDivElement>; drop?: string; t: T };
 
-function EntryRow({ entry, depth, selected, onSelect, attrs, t }: EntryRowProps) {
-  const cls = ["node", selected ? "selected" : "", entry.enabled ? "" : "disabled"].join(" ");
+/** "drop-before" / "drop-after" while a phrase is dragged over this one (manual order). */
+const dropSide = (dropKey: string | null, id: number) =>
+  dropKey === `b${id}` ? "drop-before" : dropKey === `a${id}` ? "drop-after" : undefined;
+
+function EntryRow({ entry, depth, selected, onSelect, attrs, drop, t }: EntryRowProps) {
+  const cls = ["node", selected ? "selected" : "", entry.enabled ? "" : "disabled", drop ?? ""].join(" ");
   const { draggable, ...rest } = attrs; // drag from the name: beside it = box selection
   return (
     <div className={cls} style={{ paddingLeft: 6 + depth * 16 + 18 }} data-key={`e${entry.id}`} {...rest}>

@@ -234,20 +234,28 @@ pub fn force_foreground(hwnd: isize) {
 /// one of ours. Used for the page the Google sign-in ends on: browsers don't let a page close a tab it
 /// didn't open itself. Returns whether it did.
 pub fn close_tab_titled(title: &str) -> bool {
-    unsafe {
+    let focused_tab_is = |title: &str| unsafe {
         let fg = GetForegroundWindow();
         if fg.is_null() || window_pid(fg) == std::process::id() {
             return false;
         }
         let mut buf = [0u16; 512];
         let n = GetWindowTextW(fg, buf.as_mut_ptr(), buf.len() as i32);
-        if n <= 0 || !String::from_utf16_lossy(&buf[..n as usize]).starts_with(title) {
-            return false;
-        }
+        n > 0 && String::from_utf16_lossy(&buf[..n as usize]).starts_with(title)
+    };
+    if !focused_tab_is(title) {
+        return false;
     }
     wait_modifiers_released();
     let w = b'W' as VIRTUAL_KEY;
     send_input(&[key(VK_CONTROL, 0, 0), key(w, 0, 0), key(w, 0, KEYEVENTF_KEYUP), key(VK_CONTROL, 0, KEYEVENTF_KEYUP)]);
+    // the browser reads the keys a moment later: changing the focus before that sends them elsewhere
+    for _ in 0..20 {
+        sleep(Duration::from_millis(75));
+        if !focused_tab_is(title) {
+            break;
+        }
+    }
     true
 }
 
