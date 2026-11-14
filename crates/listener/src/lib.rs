@@ -230,6 +230,27 @@ pub fn force_foreground(hwnd: isize) {
     }
 }
 
+/// Closes the focused browser tab with Ctrl+W when its window title starts with `title` and it is not
+/// one of ours. Used for the page the Google sign-in ends on: browsers don't let a page close a tab it
+/// didn't open itself. Returns whether it did.
+pub fn close_tab_titled(title: &str) -> bool {
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.is_null() || window_pid(fg) == std::process::id() {
+            return false;
+        }
+        let mut buf = [0u16; 512];
+        let n = GetWindowTextW(fg, buf.as_mut_ptr(), buf.len() as i32);
+        if n <= 0 || !String::from_utf16_lossy(&buf[..n as usize]).starts_with(title) {
+            return false;
+        }
+    }
+    wait_modifiers_released();
+    let w = b'W' as VIRTUAL_KEY;
+    send_input(&[key(VK_CONTROL, 0, 0), key(w, 0, 0), key(w, 0, KEYEVENTF_KEYUP), key(VK_CONTROL, 0, KEYEVENTF_KEYUP)]);
+    true
+}
+
 /// Handle of the focused window (cheap; use it to cache [`foreground_exe`]).
 pub fn foreground_window() -> isize {
     unsafe { GetForegroundWindow() as isize }

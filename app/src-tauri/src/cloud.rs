@@ -204,8 +204,9 @@ fn parse_redirect(request_line: &str, state: &str) -> Option<Res<String>> {
     }
 }
 
-/// The tab tries to close itself (browsers allow it only for some tabs); Phrase X comes to the front anyway.
-const PAGE_OK: &str = "<!doctype html><meta charset=utf-8><title>Phrase X</title><body style=\"font:15px system-ui;padding:3em;color:#777\">\
+/// Title of the page the sign-in ends on: Phrase X closes that tab (Ctrl+W) and comes back to the front.
+pub const LOGIN_DONE_TITLE: &str = "Phrase X - accesso";
+const PAGE_OK: &str = "<!doctype html><meta charset=utf-8><title>Phrase X - accesso</title><body style=\"font:15px system-ui;padding:3em;color:#777\">\
 <p>Fatto, torna a Phrase X.</p><script>window.close()</script>";
 const PAGE_FAIL: &str = "<!doctype html><meta charset=utf-8><title>Phrase X</title><body style=\"font:16px system-ui;padding:3em\">\
 <h1>Phrase X</h1><p>Accesso non riuscito: riprova da Impostazioni.</p><p>Sign-in failed: try again from Settings.</p>";

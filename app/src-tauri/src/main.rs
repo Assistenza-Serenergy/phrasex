@@ -324,9 +324,16 @@ fn sync_status_of(store: &Store) -> SyncStatus {
 /// Publishes this user's library for the emails in Settings (when it or the list changed), then
 /// brings in the libraries other people share with this user (when they changed).
 fn share_round(app: &AppHandle) -> Res<()> {
-    let sharing = cloud::Sharing::connect()?;
-    if sharing.name != sharing.email {
-        app.state::<AppState>().store.lock().unwrap().set_setting("sync_name", &sharing.name).map_err(err)?;
+    let mut sharing = cloud::Sharing::connect()?;
+    {
+        // Google puts the name only in the sign-in token, not in refreshed ones: keep the one saved at sign-in
+        let state = app.state::<AppState>();
+        let store = state.store.lock().unwrap();
+        if sharing.name != sharing.email {
+            store.set_setting("sync_name", &sharing.name).map_err(err)?;
+        } else if let Some(saved) = store.setting("sync_name").ok().flatten().filter(|n| !n.trim().is_empty()) {
+            sharing.name = saved;
+        }
     }
     let state = app.state::<AppState>();
     let (readers, lib, published, received) = {
@@ -471,16 +478,20 @@ fn sync_login(app: AppHandle) -> Res<SyncStatus> {
         phrasex_listener::open_url(url);
         let _ = app.emit("sync-login-url", url); // Settings offers "copy link" if no browser shows up
     })?;
-    // back to Phrase X, above the browser (topmost for a moment: Windows won't let a background app take the focus)
+    // close the browser tab the sign-in ended on (once its title shows up), then back to Phrase X
+    for _ in 0..15 {
+        std::thread::sleep(Duration::from_millis(200));
+        if phrasex_listener::close_tab_titled(cloud::LOGIN_DONE_TITLE) {
+            break;
+        }
+    }
     let h = app.clone();
     let _ = app.run_on_main_thread(move || {
         if let Some(w) = h.get_webview_window("main") {
             let _ = w.show();
             let _ = w.unminimize();
-            let _ = w.set_always_on_top(true);
-            let _ = w.set_focus();
-            let _ = w.set_always_on_top(false);
         }
+        phrasex_listener::force_foreground(h.state::<AppState>().main_window.load(Relaxed));
     });
     {
         let state = app.state::<AppState>();
