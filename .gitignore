@@ -4,6 +4,7 @@ __pycache__/
 /app/dist
 # OAuth client (see GOOGLE-SETUP.md): compiled into the exe, never committed
 /app/src-tauri/google-oauth.json
+/app/src-tauri/firebase.json
 # binaries and local logs
 *.exe
 *.zip

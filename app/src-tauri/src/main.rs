@@ -5,7 +5,7 @@
 mod cloud;
 
 use phrasex_engine::macros::{self, Action, Context, DateTime, Field, FieldKind};
-use phrasex_engine::{Case, Engine, Key, Mode, Options};
+use phrasex_engine::{Case, Engine, Key, Mode, Options, Snippet};
 use phrasex_store::{Entry, Folder, Store};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -84,6 +84,9 @@ struct EntryDto {
     tags: Vec<String>,
     #[serde(default)]
     uses: i64,
+    /// Part of a library someone shared with this user: read-only.
+    #[serde(default)]
+    shared: bool,
 }
 
 #[derive(Serialize)]
@@ -92,6 +95,8 @@ struct FolderDto {
     id: i64,
     parent_id: Option<i64>,
     name: String,
+    hotkey: String,
+    shared: bool,
 }
 
 #[derive(Serialize)]
@@ -113,6 +118,12 @@ struct Settings {
     clip_hotkey: String,
     fix_double_caps: bool,
     capitalize_sentences: bool,
+    /// Order of the phrases in the popup and in the menus: "uses" (most used first), "name" (A-Z) or "tree" (as in the library).
+    #[serde(default)]
+    popup_sort: String,
+    /// Emails that see this user's phrases (read-only) when they sign in to Phrase X.
+    #[serde(default)]
+    share_with: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -162,6 +173,7 @@ fn to_dto(store: &Store, e: Entry, uses: &HashMap<i64, i64>) -> Res<EntryDto> {
         case_sensitive: e.case_sensitive,
         enabled: e.enabled,
         hotkey: e.hotkey.unwrap_or_default(),
+        shared: false,
     })
 }
 
@@ -175,10 +187,23 @@ fn load_settings(app: &AppHandle, store: &Store) -> Settings {
         clip_history: get("clip_history") != "off",
         fix_double_caps: get("fix_double_caps") != "off",
         capitalize_sentences: get("capitalize_sentences") == "on",
+        popup_sort: match get("popup_sort").as_str() {
+            s @ ("name" | "tree") => s.into(),
+            _ => "uses".into(),
+        },
+        share_with: emails(&get("share_with")),
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
         run_as_admin: get("run_as_admin") == "on",
         excluded_apps: get("excluded_apps").lines().map(str::to_string).filter(|s| !s.is_empty()).collect(),
     }
+}
+
+/// One email per line, lowercase, without blanks and duplicates.
+fn emails(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = text.lines().map(|l| l.trim().to_lowercase()).filter(|l| l.contains('@')).collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 fn lang(store: &Store) -> String {
@@ -187,14 +212,15 @@ fn lang(store: &Store) -> String {
 
 // ---------- reload: engine, tray menu, global hotkeys ----------
 
-/// Applies the stored library and settings everywhere. Returns ids of phrases whose hotkey could not be registered,
-/// and whether the popup hotkey failed.
-fn reload(app: &AppHandle, store: &Store) -> Res<(Vec<i64>, bool)> {
+/// Applies the stored library and settings everywhere. Returns ids of phrases and of folders whose hotkey
+/// could not be registered, and whether the popup hotkey failed.
+fn reload(app: &AppHandle, store: &Store) -> Res<(Vec<i64>, Vec<i64>, bool)> {
     SYNC_DIRTY.store(true, Relaxed);
     let state = app.state::<AppState>();
     let s = load_settings(app, store);
     let opts = Options { fix_double_caps: s.fix_double_caps, capitalize_sentences: s.capitalize_sentences };
-    *state.engine.lock().unwrap() = Engine::with_options(store.engine_snippets().map_err(err)?, opts);
+    let snippets = store.engine_snippets().map_err(err)?.into_iter().map(|s| Snippet { mode: Mode::Immediate, ..s }).collect();
+    *state.engine.lock().unwrap() = Engine::with_options(snippets, opts);
     *state.excluded.lock().unwrap() = s.excluded_apps.iter().map(|s| s.to_lowercase()).collect();
 
     let menu = tray_menu(app, store, &lang(store), state.paused.load(Relaxed)).map_err(err)?;
@@ -205,7 +231,7 @@ fn reload(app: &AppHandle, store: &Store) -> Res<(Vec<i64>, bool)> {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
     if state.recording.load(Relaxed) {
-        return Ok((vec![], false)); // a shortcut field is listening: re-registered when it loses focus
+        return Ok((vec![], vec![], false)); // a shortcut field is listening: re-registered when it loses focus
     }
     let mut popup_failed = false;
     let settings = load_settings(app, store);
@@ -220,7 +246,8 @@ fn reload(app: &AppHandle, store: &Store) -> Res<(Vec<i64>, bool)> {
     *state.clip_hotkey.lock().unwrap() = if settings.clip_history { register(&settings.clip_hotkey) } else { None };
     let mut map: HashMap<u32, Vec<i64>> = HashMap::new();
     let mut failed = Vec::new();
-    for e in store.entries().map_err(err)? {
+    let entries = store.entries().map_err(err)?;
+    for e in entries.clone() {
         let Some(hk) = e.hotkey.filter(|h| !h.is_empty()) else { continue };
         let Ok(sc) = hk.parse::<Shortcut>() else {
             failed.push(e.id);
@@ -236,8 +263,30 @@ fn reload(app: &AppHandle, store: &Store) -> Res<(Vec<i64>, bool)> {
             failed.push(e.id);
         }
     }
+    // Folder shortcut: menu with the enabled phrases of the folder and its subfolders.
+    let folders = store.folders().map_err(err)?;
+    let links: Vec<(i64, Option<i64>)> = folders.iter().map(|f| (f.id, f.parent_id)).collect();
+    let mut failed_folders = Vec::new();
+    for f in folders {
+        let Some(hk) = f.hotkey.filter(|h| !h.is_empty()) else { continue };
+        let Ok(sc) = hk.parse::<Shortcut>() else {
+            failed_folders.push(f.id);
+            continue;
+        };
+        let inside = subtree(&links, f.id);
+        let ids = entries.iter().filter(|e| e.enabled && e.folder_id.is_some_and(|id| inside.contains(&id))).map(|e| e.id);
+        if Some(sc.id()) == *state.popup_hotkey.lock().unwrap() || Some(sc.id()) == *state.clip_hotkey.lock().unwrap() {
+            failed_folders.push(f.id);
+        } else if let Some(list) = map.get_mut(&sc.id()) {
+            list.extend(ids.filter(|id| !list.contains(id)).collect::<Vec<_>>());
+        } else if gs.register(sc).is_ok() {
+            map.insert(sc.id(), ids.collect());
+        } else {
+            failed_folders.push(f.id);
+        }
+    }
     *state.hotkeys.lock().unwrap() = map;
-    Ok((failed, popup_failed))
+    Ok((failed, failed_folders, popup_failed))
 }
 
 // ---------- cloud sync ("Accedi con Google") ----------
@@ -255,11 +304,58 @@ struct SyncStatus {
     email: String,
     last: String,
     error: String,
+    share_error: String,
+    /// The user's name on their Google account (empty until they sign in with the profile scope).
+    name: String,
 }
 
 fn sync_status_of(store: &Store) -> SyncStatus {
     let get = |k: &str| store.setting(k).ok().flatten().unwrap_or_default();
-    SyncStatus { configured: cloud::configured(), email: get("sync_email"), last: get("sync_last"), error: get("sync_error") }
+    SyncStatus {
+        configured: cloud::configured(),
+        email: get("sync_email"),
+        last: get("sync_last"),
+        error: get("sync_error"),
+        share_error: get("share_error"),
+        name: get("sync_name"),
+    }
+}
+
+/// Publishes this user's library for the emails in Settings (when it or the list changed), then
+/// brings in the libraries other people share with this user (when they changed).
+fn share_round(app: &AppHandle) -> Res<()> {
+    let sharing = cloud::Sharing::connect()?;
+    if sharing.name != sharing.email {
+        app.state::<AppState>().store.lock().unwrap().set_setting("sync_name", &sharing.name).map_err(err)?;
+    }
+    let state = app.state::<AppState>();
+    let (readers, lib, published, received) = {
+        let store = state.store.lock().unwrap();
+        let get = |k: &str| store.setting(k).ok().flatten().unwrap_or_default();
+        (emails(&get("share_with")), store.sync_snapshot().map_err(err)?, get("share_published"), get("share_received"))
+    };
+    let lib = phrasex_store::sync::Library { tombstones: vec![], ..lib };
+    let stamp = if readers.is_empty() { String::new() } else { cloud::fingerprint(&serde_json::to_string(&(&readers, &lib, &sharing.name)).map_err(err)?) };
+    if stamp != published {
+        sharing.publish(&readers, &lib)?;
+        state.store.lock().unwrap().set_setting("share_published", &stamp).map_err(err)?;
+    }
+    let shares = sharing.incoming()?;
+    let stamp = cloud::fingerprint(&serde_json::to_string(&shares).map_err(err)?);
+    if stamp != received {
+        let mut store = state.store.lock().unwrap();
+        store.set_shared(&shares).map_err(err)?;
+        store.set_setting("share_received", &stamp).map_err(err)?;
+        drop(store);
+        let h = app.clone();
+        app.run_on_main_thread(move || {
+            let state = h.state::<AppState>();
+            let _ = reload(&h, &state.store.lock().unwrap());
+            let _ = h.emit("library-changed", ());
+        })
+        .map_err(err)?;
+    }
+    Ok(())
 }
 
 /// Download, merge (newest edit per phrase wins), upload if the cloud is behind, apply if this PC is behind.
@@ -308,13 +404,19 @@ fn sync_round(app: &AppHandle) -> Res<()> {
 
 /// Runs a sync round and records its outcome for Settings (also sent as the "sync-status" event).
 fn sync_now_inner(app: &AppHandle) -> SyncStatus {
-    let result = {
+    let (result, share_error) = {
         let _one = SYNC.lock().unwrap();
         SYNC_DIRTY.store(false, Relaxed);
-        sync_round(app)
+        let result = sync_round(app);
+        let share = if result.is_ok() && cloud::sharing_configured() { share_round(app).err().unwrap_or_default() } else { String::new() };
+        if !share.is_empty() {
+            diag(&format!("share: {share}"));
+        }
+        (result, share)
     };
     let state = app.state::<AppState>();
     let store = state.store.lock().unwrap();
+    let _ = store.set_setting("share_error", &share_error);
     match &result {
         Ok(()) => {
             let t = phrasex_listener::System.now();
@@ -365,14 +467,26 @@ fn sync_status(state: State<AppState>) -> SyncStatus {
 /// Opens Google sign-in in the browser and waits (up to 5 minutes), then syncs at once.
 #[tauri::command(async)]
 fn sync_login(app: AppHandle) -> Res<SyncStatus> {
-    let email = cloud::login(|url| {
+    let (email, name) = cloud::login(|url| {
         phrasex_listener::open_url(url);
         let _ = app.emit("sync-login-url", url); // Settings offers "copy link" if no browser shows up
     })?;
+    // back to Phrase X, above the browser (topmost for a moment: Windows won't let a background app take the focus)
+    let h = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(w) = h.get_webview_window("main") {
+            let _ = w.show();
+            let _ = w.unminimize();
+            let _ = w.set_always_on_top(true);
+            let _ = w.set_focus();
+            let _ = w.set_always_on_top(false);
+        }
+    });
     {
         let state = app.state::<AppState>();
         let store = state.store.lock().unwrap();
         store.set_setting("sync_email", if email.is_empty() { "Google" } else { &email }).map_err(err)?;
+        store.set_setting("sync_name", &name).map_err(err)?;
         store.set_setting("sync_last", "").map_err(err)?; // first sync of this PC with this account
         store.set_setting("sync_error", "").map_err(err)?;
     }
@@ -389,11 +503,18 @@ fn sync_logout(app: AppHandle) -> SyncStatus {
     let _one = SYNC.lock().unwrap();
     cloud::logout();
     let state = app.state::<AppState>();
-    let store = state.store.lock().unwrap();
-    for k in ["sync_email", "sync_last", "sync_error"] {
+    let mut store = state.store.lock().unwrap();
+    for k in ["sync_email", "sync_name", "sync_last", "sync_error", "share_error", "share_received", "share_published"] {
         let _ = store.set_setting(k, "");
     }
-    sync_status_of(&store)
+    // what others shared came with this account: it goes with it
+    if store.set_shared(&[]).is_ok() {
+        let _ = reload(&app, &store);
+        let _ = app.emit("library-changed", ());
+    }
+    let status = sync_status_of(&store);
+    let _ = app.emit("sync-status", &status);
+    status
 }
 
 #[tauri::command(async)]
@@ -409,11 +530,28 @@ fn library(state: State<AppState>) -> Res<Library> {
     let folders = store.folders().map_err(err)?;
     let entries = store.entries().map_err(err)?;
     let uses: HashMap<i64, i64> = store.usage().map_err(err)?.into_iter().collect();
+    let (shared_folders, shared_entries) = store.shared_ids().map_err(err)?;
     Ok(Library {
-        folders: folders.into_iter().map(|f| FolderDto { id: f.id, parent_id: f.parent_id, name: f.name }).collect(),
-        entries: entries.into_iter().map(|e| to_dto(&store, e, &uses)).collect::<Res<_>>()?,
+        folders: folders
+            .into_iter()
+            .map(|f| FolderDto { shared: shared_folders.contains(&f.id), id: f.id, parent_id: f.parent_id, name: f.name, hotkey: f.hotkey.unwrap_or_default() })
+            .collect(),
+        entries: entries
+            .into_iter()
+            .map(|e| Ok(EntryDto { shared: shared_entries.contains(&e.id), ..to_dto(&store, e, &uses)? }))
+            .collect::<Res<_>>()?,
         paused: state.paused.load(Relaxed),
     })
+}
+
+/// Libraries shared with this user are read-only, and nothing of the user's own may go inside them
+/// (the next refresh of the share would delete it).
+fn own_only(store: &Store, entries: &[i64], folders: &[Option<i64>]) -> Res<()> {
+    let (shared_folders, shared_entries) = store.shared_ids().map_err(err)?;
+    if entries.iter().any(|e| shared_entries.contains(e)) || folders.iter().flatten().any(|f| shared_folders.contains(f)) {
+        return Err("shared_read_only".into());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -423,6 +561,7 @@ fn save_entry(app: AppHandle, state: State<AppState>, entry: EntryDto) -> Res<i6
         return Err("invalid_hotkey".into());
     }
     let mut store = state.store.lock().unwrap();
+    own_only(&store, &[entry.id], &[entry.folder_id])?;
     let trigger = entry.trigger.trim();
     let id = store
         .save(&Entry {
@@ -439,7 +578,7 @@ fn save_entry(app: AppHandle, state: State<AppState>, entry: EntryDto) -> Res<i6
         .map_err(err)?;
     let tags: Vec<&str> = entry.tags.iter().map(String::as_str).collect();
     store.set_tags(id, &tags).map_err(err)?;
-    let (failed, _) = reload(&app, &store)?;
+    let (failed, _, _) = reload(&app, &store)?;
     if failed.contains(&id) {
         return Err(format!("hotkey_unavailable:{id}"));
     }
@@ -449,6 +588,7 @@ fn save_entry(app: AppHandle, state: State<AppState>, entry: EntryDto) -> Res<i6
 #[tauri::command]
 fn delete_entry(app: AppHandle, state: State<AppState>, id: i64) -> Res<()> {
     let store = state.store.lock().unwrap();
+    own_only(&store, &[id], &[])?;
     if let Some(mut e) = store.entries().map_err(err)?.into_iter().find(|e| e.id == id) {
         let (name, parent) = (e.name.clone(), e.folder_id.take());
         let file = snapshot(&store, vec![], vec![e])?;
@@ -461,6 +601,7 @@ fn delete_entry(app: AppHandle, state: State<AppState>, id: i64) -> Res<()> {
 #[tauri::command]
 fn add_folder(app: AppHandle, state: State<AppState>, parent_id: Option<i64>, name: String) -> Res<i64> {
     let store = state.store.lock().unwrap();
+    own_only(&store, &[], &[parent_id])?;
     let id = store.add_folder(parent_id, name.trim()).map_err(err)?;
     reload(&app, &store)?;
     Ok(id)
@@ -469,13 +610,31 @@ fn add_folder(app: AppHandle, state: State<AppState>, parent_id: Option<i64>, na
 #[tauri::command]
 fn rename_folder(app: AppHandle, state: State<AppState>, id: i64, name: String) -> Res<()> {
     let store = state.store.lock().unwrap();
+    own_only(&store, &[], &[Some(id)])?;
     store.rename_folder(id, name.trim()).map_err(err)?;
     reload(&app, &store).map(drop)
 }
 
 #[tauri::command]
+fn set_folder_hotkey(app: AppHandle, state: State<AppState>, id: i64, hotkey: String) -> Res<()> {
+    let hotkey = hotkey.trim();
+    if !hotkey.is_empty() && hotkey.parse::<Shortcut>().is_err() {
+        return Err("invalid_hotkey".into());
+    }
+    let store = state.store.lock().unwrap();
+    own_only(&store, &[], &[Some(id)])?;
+    store.set_folder_hotkey(id, Some(hotkey).filter(|h| !h.is_empty())).map_err(err)?;
+    let (_, failed, _) = reload(&app, &store)?;
+    if failed.contains(&id) {
+        return Err("hotkey_unavailable".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn move_folder(app: AppHandle, state: State<AppState>, id: i64, parent_id: Option<i64>) -> Res<()> {
     let store = state.store.lock().unwrap();
+    own_only(&store, &[], &[Some(id), parent_id])?;
     if !store.move_folder(id, parent_id).map_err(err)? {
         return Err("folder_loop".into());
     }
@@ -485,6 +644,7 @@ fn move_folder(app: AppHandle, state: State<AppState>, id: i64, parent_id: Optio
 #[tauri::command]
 fn delete_folder(app: AppHandle, state: State<AppState>, id: i64) -> Res<()> {
     let store = state.store.lock().unwrap();
+    own_only(&store, &[], &[Some(id)])?;
     let (file, name, parent) = folder_snapshot(&store, id)?;
     store.add_trash(&name, true, parent, &serde_json::to_string(&file).map_err(err)?).map_err(err)?;
     store.delete_folder(id).map_err(err)?;
@@ -515,6 +675,9 @@ fn save_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> 
     store.set_setting("clip_history", if settings.clip_history { "on" } else { "off" }).map_err(err)?;
     store.set_setting("fix_double_caps", if settings.fix_double_caps { "on" } else { "off" }).map_err(err)?;
     store.set_setting("capitalize_sentences", if settings.capitalize_sentences { "on" } else { "off" }).map_err(err)?;
+    store.set_setting("share_with", &emails(&settings.share_with.join("\n")).join("\n")).map_err(err)?;
+    let sort = settings.popup_sort.as_str();
+    store.set_setting("popup_sort", if matches!(sort, "name" | "tree") { sort } else { "uses" }).map_err(err)?;
     if !settings.clip_history {
         store.clear_clips().map_err(err)?;
     }
@@ -537,7 +700,7 @@ fn save_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> 
             return Ok(());
         }
     }
-    let (_, popup_failed) = reload(&app, &store)?;
+    let (_, _, popup_failed) = reload(&app, &store)?;
     if popup_failed {
         return Err("popup_hotkey_unavailable".into());
     }
@@ -647,6 +810,8 @@ struct ExportFolder {
     id: i64,
     parent_id: Option<i64>,
     name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    hotkey: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -700,7 +865,10 @@ fn snapshot(store: &Store, folders: Vec<Folder>, entries: Vec<Entry>) -> Res<Exp
     Ok(ExportFile {
         app: "Phrase X".into(),
         version: 1,
-        folders: folders.into_iter().map(|f| ExportFolder { id: f.id, parent_id: f.parent_id, name: f.name }).collect(),
+        folders: folders
+            .into_iter()
+            .map(|f| ExportFolder { id: f.id, parent_id: f.parent_id, name: f.name, hotkey: f.hotkey.unwrap_or_default() })
+            .collect(),
         phrases: entries.into_iter().map(|e| to_dto(store, e, &uses)).collect::<Res<_>>()?,
     })
 }
@@ -728,7 +896,14 @@ fn export_data(state: State<AppState>, folder_id: Option<i64>) -> Res<String> {
             let (file, name, _) = folder_snapshot(&store, root)?;
             (file, format!("-{}", file_safe(&name)))
         }
-        None => (snapshot(&store, store.folders().map_err(err)?, store.entries().map_err(err)?)?, String::new()),
+        None => {
+            let (shared_folders, shared_entries) = store.shared_ids().map_err(err)?;
+            let mut folders = store.folders().map_err(err)?;
+            let mut entries = store.entries().map_err(err)?;
+            folders.retain(|f| !shared_folders.contains(&f.id));
+            entries.retain(|e| !shared_entries.contains(&e.id));
+            (snapshot(&store, folders, entries)?, String::new())
+        }
     };
     let docs = std::path::PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()).join("Documents");
     let path = docs.join(format!("PhraseX{label}-{}.json", today()));
@@ -771,7 +946,11 @@ fn import_snapshot(store: &mut Store, report: &mut ImportReport, file: ExportFil
                 Some(p) if !ids.contains_key(&p) => rest.push(f),
                 parent => {
                     let new_parent = parent.and_then(|p| ids.get(&p).copied()).or(root);
-                    ids.insert(f.id, store.add_folder(new_parent, &f.name).map_err(err)?);
+                    let id = store.add_folder(new_parent, &f.name).map_err(err)?;
+                    if keep_hotkeys && !f.hotkey.is_empty() {
+                        store.set_folder_hotkey(id, Some(&f.hotkey)).map_err(err)?;
+                    }
+                    ids.insert(f.id, id);
                     report.folders += 1;
                 }
             }
@@ -812,7 +991,7 @@ fn import_data(app: AppHandle, state: State<AppState>, content: String, file_nam
                 }
                 let p = EntryDto {
                     id: 0, folder_id: None, name: cols[0].clone(), trigger: cols[1].clone(), body: cols[2].clone(),
-                    immediate: false, case_sensitive: false, enabled: true, hotkey: String::new(), tags: vec![], uses: 0,
+                    immediate: false, case_sensitive: false, enabled: true, hotkey: String::new(), tags: vec![], uses: 0, shared: false,
                 };
                 import_phrase(&mut store, &mut report, root, p, false)?;
             }
@@ -1263,6 +1442,11 @@ fn watch_clipboard(app: AppHandle) {
     let mut seen = phrasex_listener::clipboard_sequence();
     loop {
         std::thread::sleep(Duration::from_millis(400));
+        // scripts/reinstall.cmd asks us to quit: when we run as administrator it can't kill us
+        if std::fs::remove_file(data_dir().join("quit-request")).is_ok() {
+            app.exit(0);
+            return;
+        }
         let seq = phrasex_listener::clipboard_sequence();
         if seq == seen {
             continue;
@@ -1393,10 +1577,10 @@ fn main() {
                     } else if Some(shortcut.id()) == *state.clip_hotkey.lock().unwrap() {
                         show_popup(app, "clips");
                     } else if let Some(ids) = state.hotkeys.lock().unwrap().get(&shortcut.id()).cloned() {
-                        if let [id] = ids[..] {
-                            insert_phrase(app, id);
-                        } else {
-                            offer_choice(app, Choice { ids, backspaces: 0, case: Case::AsIs, suffix: String::new() });
+                        match ids[..] {
+                            [] => {} // folder shortcut on a folder with no enabled phrases
+                            [id] => insert_phrase(app, id),
+                            _ => offer_choice(app, Choice { ids, backspaces: 0, case: Case::AsIs, suffix: String::new() }),
                         }
                     }
                 })
@@ -1417,7 +1601,7 @@ fn main() {
             recording: AtomicBool::new(false),
         })
         .invoke_handler(tauri::generate_handler![
-            library, save_entry, delete_entry, add_folder, rename_folder, move_folder, delete_folder, set_paused,
+            library, save_entry, delete_entry, add_folder, rename_folder, set_folder_hotkey, move_folder, delete_folder, set_paused,
             settings, save_settings, running_apps, popup_insert, popup_hide, form_pending, form_submit,
             clips, clip_insert, clip_delete, clip_clear, clip_to_phrase, export_data, import_data, open_backups, install_autocorrect,
             trash, trash_restore, trash_delete, trash_clear, choice_pending, choice_pick, set_no_expand, set_recording_hotkey,
@@ -1537,6 +1721,7 @@ mod tests {
         let top = s.add_folder(None, "Top").unwrap();
         let a = s.add_folder(Some(top), "A").unwrap();
         let b = s.add_folder(Some(a), "B").unwrap();
+        s.set_folder_hotkey(a, Some("Ctrl+Alt+A")).unwrap();
         let mut e = Entry::new(Some(b), "Firma", "fir", "Saluti");
         e.hotkey = Some("Ctrl+Alt+F".into());
         let id = s.save(&e).unwrap();
@@ -1551,6 +1736,7 @@ mod tests {
         let new_a = folders.iter().find(|f| f.name == "A").unwrap();
         let new_b = folders.iter().find(|f| f.name == "B").unwrap();
         assert_eq!((new_a.parent_id, new_b.parent_id), (Some(top), Some(new_a.id)));
+        assert_eq!(new_a.hotkey.as_deref(), Some("Ctrl+Alt+A"), "folder shortcut restored");
         let restored = s.entries().unwrap().into_iter().find(|e| e.name == "Firma").unwrap();
         assert_eq!((restored.folder_id, restored.trigger.as_deref(), restored.hotkey.as_deref()), (Some(new_b.id), Some("fir"), Some("Ctrl+Alt+F")));
         assert_eq!(s.tags(restored.id).unwrap(), ["mail"]);

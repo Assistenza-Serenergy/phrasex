@@ -8,7 +8,25 @@ pub use rusqlite::{Error, Result};
 pub mod sync;
 
 /// Schema migrations, applied in order; `PRAGMA user_version` = number applied.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8];
+
+/// Libraries other people share with this user: read-only copies, `shared` = the owner's id.
+/// They never go into this user's sync (no tombstones, not in the snapshot).
+const V8: &str = "
+ALTER TABLE folder ADD COLUMN shared TEXT;
+ALTER TABLE snippet ADD COLUMN shared TEXT;
+DROP TRIGGER snippet_tombstone;
+DROP TRIGGER folder_tombstone;
+CREATE TRIGGER snippet_tombstone AFTER DELETE ON snippet WHEN OLD.shared IS NULL BEGIN
+  INSERT OR REPLACE INTO tombstone VALUES (OLD.uid, strftime('%Y-%m-%d %H:%M:%f', 'now'));
+END;
+CREATE TRIGGER folder_tombstone AFTER DELETE ON folder WHEN OLD.shared IS NULL BEGIN
+  INSERT OR REPLACE INTO tombstone VALUES (OLD.uid, strftime('%Y-%m-%d %H:%M:%f', 'now'));
+END;
+";
+
+/// Folder shortcut: opens a menu with every phrase of the folder (subfolders included).
+const V7: &str = "ALTER TABLE folder ADD COLUMN hotkey TEXT;";
 
 /// SQL for "now" as sortable UTC text with milliseconds (the sync clock).
 const NOW: &str = "strftime('%Y-%m-%d %H:%M:%f', 'now')";
@@ -125,6 +143,7 @@ pub struct Folder {
     pub id: i64,
     pub parent_id: Option<i64>,
     pub name: String,
+    pub hotkey: Option<String>,
 }
 
 /// A stored snippet. `id == 0` means "not saved yet".
@@ -237,6 +256,10 @@ impl Store {
         self.db.execute(&format!("UPDATE folder SET name = ?2, updated_at = {NOW} WHERE id = ?1"), params![id, name]).map(drop)
     }
 
+    pub fn set_folder_hotkey(&self, id: i64, hotkey: Option<&str>) -> Result<()> {
+        self.db.execute(&format!("UPDATE folder SET hotkey = ?2, updated_at = {NOW} WHERE id = ?1"), params![id, hotkey]).map(drop)
+    }
+
     /// Moves a folder under `parent` (None = top level). Refuses to move it inside itself.
     /// Returns false when the move would create a loop.
     pub fn move_folder(&self, id: i64, parent: Option<i64>) -> Result<bool> {
@@ -253,8 +276,8 @@ impl Store {
     }
 
     pub fn folders(&self) -> Result<Vec<Folder>> {
-        let mut st = self.db.prepare("SELECT id, parent_id, name FROM folder ORDER BY name COLLATE NOCASE")?;
-        let rows = st.query_map([], |r| Ok(Folder { id: r.get(0)?, parent_id: r.get(1)?, name: r.get(2)? }))?;
+        let mut st = self.db.prepare("SELECT id, parent_id, name, hotkey FROM folder ORDER BY name COLLATE NOCASE")?;
+        let rows = st.query_map([], |r| Ok(Folder { id: r.get(0)?, parent_id: r.get(1)?, name: r.get(2)?, hotkey: r.get(3)? }))?;
         rows.collect()
     }
 

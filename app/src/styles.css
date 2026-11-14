@@ -13,9 +13,10 @@
   --danger: #c0262d;
   --kbd: #f4f4f4;
   --folder: #e0a526; /* yellow folders, like Windows */
-  --serif: "Liberation Serif", "Times New Roman", Georgia, serif;
+  --font: Calibri, Carlito, "Segoe UI", system-ui, sans-serif;
+  --serif: var(--font);
   color-scheme: light;
-  font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font: 14px/1.4 var(--font);
   color: var(--text);
   background: var(--bg);
 }
@@ -41,6 +42,8 @@
 .brand span, .welcome h1, .settings h2, .form-window h1 { font-family: var(--serif); }
 
 * { box-sizing: border-box; }
+/* fieldset used only to make a whole form read-only (disabled) without changing its layout */
+fieldset.contents { display: contents; }
 html, body, #root { height: 100%; margin: 0; }
 button, input, select, textarea { font: inherit; color: inherit; }
 
@@ -50,7 +53,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
   display: flex; align-items: center; gap: 6px; padding: 8px 10px;
   background: var(--panel); border-bottom: 1px solid var(--border);
 }
-.toolbar .search { flex: 1; min-width: 120px; margin-left: 8px; }
+.toolbar .search { flex: 0 1 320px; min-width: 120px; margin-left: 8px; }
+.toolbar .spacer { flex: 1; }
+/* one line at any width: labels never wrap; on a narrow window the icon buttons drop their label */
+.toolbar > *, .toolbar button { white-space: nowrap; flex-shrink: 0; }
+.toolbar .search { flex-shrink: 1; min-width: 80px; }
+@media (max-width: 1100px) {
+  .brand span, .toolbar button:has(> .icon) > span { display: none; }
+}
+.toolbar .account span { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 button {
   display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px;
@@ -77,13 +88,14 @@ input, select, textarea {
   width: 300px; min-width: 200px; max-width: 60%; resize: horizontal; overflow: auto;
   background: var(--panel); border-right: 1px solid var(--border); padding: 6px 0;
 }
-.node { display: flex; align-items: center; padding-right: 6px; }
+.node { display: flex; align-items: center; gap: 6px; padding-right: 6px; margin: 0 4px; border-radius: 4px; }
 .node .label {
-  flex: 1; min-width: 0; justify-content: flex-start; border: 0; background: none;
-  padding: 3px 6px; border-radius: 4px; text-align: left;
+  flex: 0 1 auto; min-width: 0; justify-content: flex-start; border: 0; background: none;
+  padding: 3px 6px; text-align: left;
 }
-.node .label:hover { background: var(--hover); }
-.node.selected .label { background: var(--selected); }
+.node:hover, .node .label:hover:not(:disabled) { background: var(--hover); }
+.node.selected, .node.selected .label:hover { background: var(--selected); }
+.node > kbd { margin-left: auto; flex: none; }
 .node.disabled .name { color: var(--muted); text-decoration: line-through; }
 .node .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chevron {
@@ -92,7 +104,7 @@ input, select, textarea {
 }
 .chevron.open { transform: rotate(90deg); }
 kbd {
-  font: 11px/1.6 "Cascadia Mono", Consolas, monospace; padding: 0 5px; border-radius: 4px;
+  font: 12px/1.6 var(--font); padding: 0 5px; border-radius: 4px;
   background: var(--kbd); border: 1px solid var(--border); color: var(--muted);
 }
 
@@ -102,7 +114,7 @@ kbd {
 .row .field { flex: 1; }
 .field > span { font-weight: 600; font-size: 12px; color: var(--muted); }
 .field.grow { flex: 1 1 auto; min-height: 140px; }
-.field.grow textarea { flex: 1; resize: none; font: 14px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+.field.grow textarea { flex: 1; resize: none; font: 15px/1.5 var(--font); }
 .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
 .row.end { justify-content: flex-end; }
 .row.checks { align-items: center; }
@@ -132,15 +144,13 @@ button.accent:hover:not(:disabled) { background: var(--accent); filter: brightne
 button.accent .icon { color: currentColor; }
 .toolbar button.on { background: var(--selected); border-color: var(--accent); }
 .toolbar .search { border-radius: 999px; padding-left: 14px; }
-input.hotkey { font-family: "Cascadia Mono", Consolas, monospace; cursor: pointer; caret-color: transparent; }
+input.hotkey { font-family: var(--font); cursor: pointer; caret-color: transparent; }
 .detail .editor { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; box-shadow: 0 1px 2px oklch(0 0 0 / .06), 0 8px 24px oklch(0 0 0 / .05); }
 select { cursor: pointer; }
 .macros select { padding: 3px 8px; font-size: 12px; }
 
 .welcome { max-width: 520px; margin: 12vh auto 0; text-align: center; }
-.welcome h1 { font-size: 22px; margin: 14px 0 4px; }
-.welcome ul { text-align: left; margin: 22px auto 0; padding: 0; list-style: none; display: grid; gap: 8px; }
-.welcome li { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+.welcome h1 { font-size: 24px; margin: 14px 0 4px; }
 
 .settings { height: auto; }
 .settings h2 { font-size: 16px; letter-spacing: .2px; color: var(--muted); margin: 8px 0 0; }
@@ -169,7 +179,6 @@ select { cursor: pointer; }
 .form-fields { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
 .row.end { gap: 8px; }
 
-.stats { display: grid; gap: 2px; margin-top: 18px; padding: 12px 14px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); text-align: left; }
 .popup-tabs { display: flex; gap: 4px; padding: 10px 10px 0; }
 .popup-tabs button { flex: 1; justify-content: center; border-radius: 8px; }
 .popup-tabs button.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
@@ -197,20 +206,20 @@ select { cursor: pointer; }
 .chooser { outline: none; }
 .chooser-title { padding: 10px 14px 6px; font: 600 15px/1.2 var(--serif); }
 .chooser .popup-list { flex: 0 1 auto; }
-.chooser-num { width: 16px; color: var(--muted); font: 11px/1 "Cascadia Mono", Consolas, monospace; text-align: right; flex: none; }
+.chooser-num { width: 16px; color: var(--muted); font: 12px/1 var(--font); text-align: right; flex: none; }
 .chooser-preview { flex: 1; min-height: 0; margin: 0 10px 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); overflow: hidden; display: flex; flex-direction: column; gap: 4px; }
 .chooser-path { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chooser-body { white-space: pre-wrap; overflow: auto; font-size: 12.5px; }
 .shared-note { margin: -4px 0 0; font-size: 12px; }
 
 /* ---------- tree: drag & drop, context menu ---------- */
-.node.drop .label { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.node.drop { outline: 2px dashed var(--accent); outline-offset: -2px; }
 .tree.drop { box-shadow: inset 0 0 0 2px var(--accent); }
 .menu-backdrop { position: fixed; inset: 0; z-index: 50; }
 .menu {
   position: fixed; min-width: 220px; padding: 4px; display: flex; flex-direction: column;
   background: var(--panel); border: 1px solid var(--border); border-radius: 8px; user-select: none;
-  box-shadow: 0 6px 24px oklch(0 0 0 / .18);
+  box-shadow: 0 6px 24px oklch(0 0 0 / .18); max-height: calc(100vh - 8px); overflow-y: auto;
 }
 .menu button { border: 0; background: none; justify-content: flex-start; padding: 5px 10px; border-radius: 5px; }
 .menu button:hover, .menu button:focus-visible { background: var(--hover); outline: none; }
@@ -230,3 +239,13 @@ button.danger-fill { background: var(--danger); border-color: var(--danger); col
 .trash .link-row { border: 0; background: none; padding: 0; text-align: left; font: inherit; color: inherit; cursor: pointer; }
 .trash .link-row:hover { text-decoration: underline; }
 .editor .trash { max-height: none; }
+
+/* messages float bottom-right and disappear by themselves (no status bar) */
+.toast {
+  position: fixed; right: 16px; bottom: 16px; z-index: 40; display: flex; align-items: center; gap: 4px;
+  padding: 8px 14px; border-radius: 8px; background: var(--panel); border: 1px solid var(--border);
+  box-shadow: 0 6px 24px oklch(0 0 0 / .18); max-width: min(520px, calc(100vw - 32px));
+}
+.toast.error { color: var(--danger); border-color: var(--danger); }
+.toast button.link { border: 0; background: none; padding: 0 0 0 10px; color: var(--accent); font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
+button.paused-badge { color: var(--danger); border-color: var(--danger); }

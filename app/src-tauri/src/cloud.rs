@@ -2,7 +2,7 @@
 //! Windows Credential Manager, library as one JSON file in the hidden Drive appDataFolder.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine as _};
-use phrasex_store::sync::{merge, Library};
+use phrasex_store::sync::{merge, Library, Share};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::io::{BufRead, BufReader, Write};
@@ -14,7 +14,8 @@ use std::time::{Duration, Instant};
 /// From app/src-tauri/google-oauth.json via build.rs (see GOOGLE-SETUP.md).
 const CLIENT_ID: Option<&str> = option_env!("PHRASEX_GOOGLE_CLIENT_ID");
 const CLIENT_SECRET: Option<&str> = option_env!("PHRASEX_GOOGLE_CLIENT_SECRET");
-const SCOPES: &str = "openid email https://www.googleapis.com/auth/drive.appdata";
+/// profile = the user's name, shown to the people they share their phrases with.
+const SCOPES: &str = "openid email profile https://www.googleapis.com/auth/drive.appdata";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const FILES_URL: &str = "https://www.googleapis.com/drive/v3/files";
 const UPLOAD_URL: &str = "https://www.googleapis.com/upload/drive/v3/files";
@@ -110,8 +111,8 @@ struct Token {
 }
 
 /// Opens Google's sign-in in the browser, waits for the redirect, stores the refresh token.
-/// Returns the account's email.
-pub fn login(open_browser: impl Fn(&str)) -> Res<String> {
+/// Returns the account's email and the user's name (as on their Google account).
+pub fn login(open_browser: impl Fn(&str)) -> Res<(String, String)> {
     let (id, secret) = client()?;
     CANCEL_LOGIN.store(false, Relaxed);
     let (verifier, state) = (random(32)?, random(16)?);
@@ -144,13 +145,18 @@ pub fn login(open_browser: impl Fn(&str)) -> Res<String> {
         return Err(SCOPE_MISSING.into());
     }
     credential()?.set_password(&tok.refresh_token.ok_or("google_no_refresh_token")?).map_err(err)?;
-    Ok(tok.id_token.as_deref().and_then(email_from_id_token).unwrap_or_default())
+    let id = tok.id_token.unwrap_or_default();
+    Ok((email_from_id_token(&id).unwrap_or_default(), claim(&id, "name").unwrap_or_default()))
 }
 
 /// The email claim of a Google id_token (already trusted: it came straight from the token endpoint over TLS).
 fn email_from_id_token(jwt: &str) -> Option<String> {
+    claim(jwt, "email")
+}
+
+fn claim(jwt: &str, key: &str) -> Option<String> {
     let payload = B64.decode(jwt.split('.').nth(1)?.trim_end_matches('=')).ok()?;
-    serde_json::from_slice::<serde_json::Value>(&payload).ok()?["email"].as_str().map(str::to_string)
+    serde_json::from_slice::<serde_json::Value>(&payload).ok()?[key].as_str().map(str::to_string)
 }
 
 fn wait_for_code(listener: &TcpListener, state: &str) -> Res<String> {
@@ -198,8 +204,9 @@ fn parse_redirect(request_line: &str, state: &str) -> Option<Res<String>> {
     }
 }
 
-const PAGE_OK: &str = "<!doctype html><meta charset=utf-8><title>Phrase X</title><body style=\"font:16px system-ui;padding:3em\">\
-<h1>Phrase X</h1><p>Accesso eseguito, puoi chiudere questa scheda.</p><p>Signed in, you can close this tab.</p>";
+/// The tab tries to close itself (browsers allow it only for some tabs); Phrase X comes to the front anyway.
+const PAGE_OK: &str = "<!doctype html><meta charset=utf-8><title>Phrase X</title><body style=\"font:15px system-ui;padding:3em;color:#777\">\
+<p>Fatto, torna a Phrase X.</p><script>window.close()</script>";
 const PAGE_FAIL: &str = "<!doctype html><meta charset=utf-8><title>Phrase X</title><body style=\"font:16px system-ui;padding:3em\">\
 <h1>Phrase X</h1><p>Accesso non riuscito: riprova da Impostazioni.</p><p>Sign-in failed: try again from Settings.</p>";
 
@@ -222,6 +229,11 @@ pub fn logout() {
 }
 
 fn access_token(a: &ureq::Agent) -> Res<String> {
+    Ok(tokens(a)?.access_token)
+}
+
+/// Fresh tokens from the stored refresh token (the id_token says who the user is).
+fn tokens(a: &ureq::Agent) -> Res<Token> {
     let (id, secret) = client()?;
     let refresh = credential()?.get_password().map_err(|_| "google_signed_out".to_string())?;
     let form = [("client_id", id), ("client_secret", secret), ("refresh_token", refresh.as_str()), ("grant_type", "refresh_token")];
@@ -231,7 +243,7 @@ fn access_token(a: &ureq::Agent) -> Res<String> {
             if !has_drive(tok.scope.as_deref()) {
                 return Err(SCOPE_MISSING.into());
             }
-            Ok(tok.access_token)
+            Ok(tok)
         }
         Err(ureq::Error::Status(400 | 401, _)) => Err("google_relogin".into()), // revoked or expired
         Err(e) => Err(http(e)),
@@ -337,6 +349,122 @@ impl Drive {
     }
 }
 
+// ---------- sharing: one Firestore document per owner, readable by the emails they listed ----------
+
+const FIREBASE_KEY: Option<&str> = option_env!("PHRASEX_FIREBASE_API_KEY");
+const PROJECT: Option<&str> = option_env!("PHRASEX_GOOGLE_PROJECT_ID");
+
+pub fn sharing_configured() -> bool {
+    matches!((FIREBASE_KEY, PROJECT), (Some(k), Some(p)) if !k.is_empty() && !p.is_empty())
+}
+
+/// Short stable digest, to tell whether something changed since last time.
+pub fn fingerprint(s: &str) -> String {
+    B64.encode(Sha256::digest(s.as_bytes()))
+}
+
+/// Signed in to Firebase with the user's Google account (no extra sign-in: the stored Google token is reused).
+pub struct Sharing {
+    agent: ureq::Agent,
+    bearer: String,
+    base: String,
+    uid: String,
+    pub email: String,
+    pub name: String,
+}
+
+impl Sharing {
+    pub fn connect() -> Res<Self> {
+        let (Some(key), Some(project)) = (FIREBASE_KEY, PROJECT) else { return Err("sharing_not_configured".into()) };
+        let agent = agent()?;
+        let google = tokens(&agent)?.id_token.ok_or("google_relogin")?;
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct SignIn {
+            id_token: String,
+            local_id: String,
+            email: Option<String>,
+            display_name: Option<String>,
+        }
+        let r: SignIn = agent
+            .post(&format!("https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key={key}"))
+            .send_json(serde_json::json!({
+                "postBody": format!("id_token={google}&providerId=google.com"),
+                "requestUri": "http://localhost",
+                "returnSecureToken": true,
+            }))
+            .map_err(http)?
+            .into_json()
+            .map_err(err)?;
+        let email = r.email.or_else(|| claim(&google, "email")).unwrap_or_default().to_lowercase();
+        // accounts signed in before the profile scope have no name until they sign in again: email then
+        let name = claim(&google, "name").or(r.display_name).filter(|n| !n.trim().is_empty()).unwrap_or_else(|| email.clone());
+        Ok(Self {
+            agent,
+            bearer: format!("Bearer {}", r.id_token),
+            base: format!("https://firestore.googleapis.com/v1/projects/{project}/databases/(default)/documents"),
+            uid: r.local_id,
+            email,
+            name,
+        })
+    }
+
+    /// Puts the user's library where the listed emails can read it; no emails = stop sharing.
+    /// ponytail: one document, Firestore caps it at 1 MB (thousands of phrases); split per folder if a library outgrows it.
+    pub fn publish(&self, readers: &[String], lib: &Library) -> Res<()> {
+        let url = format!("{}/shares/{}", self.base, self.uid);
+        if readers.is_empty() {
+            return match self.agent.delete(&url).set("Authorization", &self.bearer).call() {
+                Ok(_) | Err(ureq::Error::Status(404, _)) => Ok(()),
+                Err(e) => Err(http(e)),
+            };
+        }
+        let text = |v: &str| serde_json::json!({ "stringValue": v });
+        let body = serde_json::json!({ "fields": {
+            "ownerName": text(&self.name),
+            "ownerEmail": text(&self.email),
+            "readers": { "arrayValue": { "values": readers.iter().map(|r| text(r)).collect::<Vec<_>>() } },
+            "library": text(&serde_json::to_string(lib).map_err(err)?),
+        }});
+        self.agent.request("PATCH", &url).set("Authorization", &self.bearer).send_json(body).map_err(http)?;
+        Ok(())
+    }
+
+    /// Libraries other people share with this user's email.
+    pub fn incoming(&self) -> Res<Vec<Share>> {
+        let query = serde_json::json!({ "structuredQuery": {
+            "from": [{ "collectionId": "shares" }],
+            "where": { "fieldFilter": { "field": { "fieldPath": "readers" }, "op": "ARRAY_CONTAINS", "value": { "stringValue": self.email } } },
+        }});
+        let rows: Vec<serde_json::Value> = self
+            .agent
+            .post(&format!("{}:runQuery", self.base))
+            .set("Authorization", &self.bearer)
+            .send_json(query)
+            .map_err(http)?
+            .into_json()
+            .map_err(err)?;
+        Ok(shares_from(&rows, &self.uid))
+    }
+}
+
+/// runQuery rows → shares (a row without `document` = no results; the user's own document is skipped).
+fn shares_from(rows: &[serde_json::Value], me: &str) -> Vec<Share> {
+    let mut out: Vec<Share> = rows
+        .iter()
+        .filter_map(|row| {
+            let doc = row.get("document")?;
+            let owner = doc["name"].as_str()?.rsplit('/').next()?.to_string();
+            let field = |k: &str| doc["fields"][k]["stringValue"].as_str().unwrap_or_default().to_string();
+            let library = serde_json::from_str(&field("library")).ok()?;
+            let name = Some(field("ownerName")).filter(|n| !n.is_empty()).unwrap_or_else(|| field("ownerEmail"));
+            (owner != me).then_some(Share { owner, name, library })
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,6 +484,21 @@ mod tests {
             tags: vec![],
             updated_at: at.into(),
         }
+    }
+
+    #[test]
+    fn firestore_rows_to_shares() {
+        let lib = Library { snippets: vec![snippet("a", EPOCH)], ..Default::default() };
+        let doc = |id: &str, name: &str| {
+            serde_json::json!({ "document": { "name": format!("projects/p/databases/(default)/documents/shares/{id}"), "fields": {
+                "ownerName": { "stringValue": name }, "ownerEmail": { "stringValue": "x@y.it" },
+                "library": { "stringValue": serde_json::to_string(&lib).unwrap() } } } })
+        };
+        let rows = vec![doc("u2", "Zeno"), doc("me", "Io"), doc("u1", ""), serde_json::json!({ "readTime": "t" })];
+        let got = shares_from(&rows, "me");
+        assert_eq!(got.iter().map(|s| (s.owner.as_str(), s.name.as_str())).collect::<Vec<_>>(), [("u1", "x@y.it"), ("u2", "Zeno")]);
+        assert_eq!(got[0].library, lib);
+        assert!(shares_from(&[serde_json::json!({ "readTime": "t" })], "me").is_empty());
     }
 
     #[test]

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type Folder = { id: number; parentId: number | null; name: string };
+/** shared = part of a library someone shared with this user (read-only). */
+export type Folder = { id: number; parentId: number | null; name: string; hotkey: string; shared: boolean };
 export type Entry = {
   id: number;
   folderId: number | null;
@@ -13,6 +14,7 @@ export type Entry = {
   hotkey: string;
   tags: string[];
   uses: number;
+  shared: boolean;
 };
 export type Library = { folders: Folder[]; entries: Entry[]; paused: boolean };
 export type Lang = "it" | "en";
@@ -26,8 +28,10 @@ export type Settings = {
   clipHotkey: string;
   fixDoubleCaps: boolean;
   capitalizeSentences: boolean;
+  popupSort: "uses" | "name" | "tree";
+  shareWith: string[];
 };
-export type SyncStatus = { configured: boolean; email: string; last: string; error: string };
+export type SyncStatus = { configured: boolean; email: string; name: string; last: string; error: string; shareError: string };
 export type Clip = { id: number; text: string };
 export type TrashItem = { id: number; label: string; isFolder: boolean; deletedAt: string };
 export type FormField = {
@@ -43,6 +47,7 @@ export const api = {
   deleteEntry: (id: number) => invoke<void>("delete_entry", { id }),
   addFolder: (parentId: number | null, name: string) => invoke<number>("add_folder", { parentId, name }),
   renameFolder: (id: number, name: string) => invoke<void>("rename_folder", { id, name }),
+  setFolderHotkey: (id: number, hotkey: string) => invoke<void>("set_folder_hotkey", { id, hotkey }),
   moveFolder: (id: number, parentId: number | null) => invoke<void>("move_folder", { id, parentId }),
   deleteFolder: (id: number) => invoke<void>("delete_folder", { id }),
   setPaused: (paused: boolean) => invoke<void>("set_paused", { paused }),

@@ -33,5 +33,7 @@ export function errText(t: T, e: unknown): string {
   if (code === "google_scope_missing") return t("errGoogleScope");
   if (code === "google_relogin" || code === "google_signed_out") return t("errGoogleRelogin");
   if (code.startsWith("google_login_failed")) return t("errGoogleLogin");
+  if (code === "shared_read_only") return t("errSharedReadOnly");
+  if (code === "sharing_not_configured") return t("errSharingNotConfigured");
   return t("errGeneric", { msg: code });
 }

@@ -22,6 +22,8 @@ pub struct SyncFolder {
     pub uid: String,
     pub parent: Option<String>,
     pub name: String,
+    #[serde(default)] // documents written before folder shortcuts
+    pub hotkey: Option<String>,
     pub updated_at: String,
 }
 
@@ -120,14 +122,15 @@ impl Store {
     /// The library as the sync document (local ids replaced by uids).
     pub fn sync_snapshot(&self) -> Result<Library> {
         let mut st = self.db.prepare(
-            "SELECT f.uid, p.uid, f.name, f.updated_at FROM folder f LEFT JOIN folder p ON p.id = f.parent_id ORDER BY f.uid",
+            "SELECT f.uid, p.uid, f.name, f.updated_at, f.hotkey FROM folder f LEFT JOIN folder p ON p.id = f.parent_id
+             WHERE f.shared IS NULL ORDER BY f.uid",
         )?;
         let folders = st
-            .query_map([], |r| Ok(SyncFolder { uid: r.get(0)?, parent: r.get(1)?, name: r.get(2)?, updated_at: r.get(3)? }))?
+            .query_map([], |r| Ok(SyncFolder { uid: r.get(0)?, parent: r.get(1)?, name: r.get(2)?, updated_at: r.get(3)?, hotkey: r.get(4)? }))?
             .collect::<Result<_>>()?;
         let mut st = self.db.prepare(
             "SELECT s.id, s.uid, f.uid, s.name, s.trigger, s.body, s.mode, s.case_sensitive, s.enabled, s.hotkey, s.updated_at
-             FROM snippet s LEFT JOIN folder f ON f.id = s.folder_id ORDER BY s.uid",
+             FROM snippet s LEFT JOIN folder f ON f.id = s.folder_id WHERE s.shared IS NULL ORDER BY s.uid",
         )?;
         let rows: Vec<(i64, SyncSnippet)> = st
             .query_map([], |r| {
@@ -163,9 +166,9 @@ impl Store {
         let mut ids: HashMap<&str, i64> = HashMap::new();
         for f in &lib.folders {
             tx.execute(
-                "INSERT INTO folder (uid, name, updated_at, parent_id) VALUES (?1, ?2, ?3, NULL)
-                 ON CONFLICT(uid) DO UPDATE SET name = ?2, updated_at = ?3, parent_id = NULL",
-                params![f.uid, f.name, f.updated_at],
+                "INSERT INTO folder (uid, name, updated_at, parent_id, hotkey) VALUES (?1, ?2, ?3, NULL, ?4)
+                 ON CONFLICT(uid) DO UPDATE SET name = ?2, updated_at = ?3, parent_id = NULL, hotkey = ?4",
+                params![f.uid, f.name, f.updated_at, f.hotkey],
             )?;
             ids.insert(&f.uid, tx.query_row("SELECT id FROM folder WHERE uid = ?1", [&f.uid], |r| r.get(0))?);
         }
@@ -192,7 +195,7 @@ impl Store {
         let live: HashSet<&str> = lib.folders.iter().map(|f| f.uid.as_str()).chain(lib.snippets.iter().map(|s| s.uid.as_str())).collect();
         for table in ["snippet", "folder"] {
             let uids: Vec<String> =
-                tx.prepare(&format!("SELECT uid FROM {table}"))?.query_map([], |r| r.get(0))?.collect::<Result<_>>()?;
+                tx.prepare(&format!("SELECT uid FROM {table} WHERE shared IS NULL"))?.query_map([], |r| r.get(0))?.collect::<Result<_>>()?;
             for uid in uids.iter().filter(|u| !live.contains(u.as_str())) {
                 tx.execute(&format!("DELETE FROM {table} WHERE uid = ?1"), [uid])?;
             }
@@ -204,6 +207,67 @@ impl Store {
         }
         tx.commit()
     }
+
+    /// Replaces the libraries shared with this user. Each one becomes a top-level folder named after
+    /// its owner, holding the owner's tree (read-only; shortcuts stay with the owner).
+    pub fn set_shared(&mut self, shares: &[Share]) -> Result<()> {
+        let tx = self.db.transaction()?;
+        tx.execute_batch("DELETE FROM snippet WHERE shared IS NOT NULL; DELETE FROM folder WHERE shared IS NOT NULL;")?;
+        for sh in shares {
+            let add_folder = |name: &str, uid: String| -> Result<i64> {
+                tx.execute(
+                    "INSERT INTO folder (parent_id, name, uid, updated_at, shared) VALUES (NULL, ?1, ?2, ?3, ?4)",
+                    params![name, uid, EPOCH, sh.owner],
+                )?;
+                Ok(tx.last_insert_rowid())
+            };
+            let root = add_folder(&sh.name, format!("s:{}", sh.owner))?;
+            let mut ids: HashMap<&str, i64> = HashMap::new();
+            for f in &sh.library.folders {
+                ids.insert(&f.uid, add_folder(&f.name, format!("s:{}:{}", sh.owner, f.uid))?);
+            }
+            for f in &sh.library.folders {
+                let parent = f.parent.as_deref().and_then(|p| ids.get(p)).copied().unwrap_or(root);
+                tx.execute("UPDATE folder SET parent_id = ?2 WHERE id = ?1", params![ids[f.uid.as_str()], parent])?;
+            }
+            for s in &sh.library.snippets {
+                let folder = s.folder.as_deref().and_then(|u| ids.get(u)).copied().unwrap_or(root);
+                tx.execute(
+                    "INSERT INTO snippet (uid, folder_id, name, trigger, body, mode, case_sensitive, enabled, updated_at, shared)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![
+                        format!("s:{}:{}", sh.owner, s.uid),
+                        folder,
+                        s.name,
+                        s.trigger,
+                        s.body,
+                        if s.immediate { "immediate" } else { "word" },
+                        s.case_sensitive,
+                        s.enabled,
+                        s.updated_at,
+                        sh.owner
+                    ],
+                )?;
+            }
+        }
+        tx.commit()
+    }
+
+    /// Ids of the read-only folders and phrases (libraries shared with this user).
+    pub fn shared_ids(&self) -> Result<(HashSet<i64>, HashSet<i64>)> {
+        let ids = |table: &str| -> Result<HashSet<i64>> {
+            self.db.prepare(&format!("SELECT id FROM {table} WHERE shared IS NOT NULL"))?.query_map([], |r| r.get(0))?.collect()
+        };
+        Ok((ids("folder")?, ids("snippet")?))
+    }
+}
+
+/// A library someone shared with this user: owner's id, the folder name shown here, their phrases.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Share {
+    pub owner: String,
+    pub name: String,
+    pub library: Library,
 }
 
 #[cfg(test)]
@@ -231,10 +295,43 @@ mod tests {
     }
 
     #[test]
+    fn shared_library_is_read_only_copy_outside_own_sync() {
+        let owner = Store::open_in_memory().unwrap();
+        let f = owner.add_folder(None, "Clienti").unwrap();
+        let sub = owner.add_folder(Some(f), "Mail").unwrap();
+        owner.save(&Entry::new(Some(sub), "Saluti", "sal", "Cordiali saluti")).unwrap();
+        let shared = Share { owner: "u1".into(), name: "Marco Spagnuolo".into(), library: owner.sync_snapshot().unwrap() };
+
+        let mut me = Store::open_in_memory().unwrap();
+        me.save(&Entry::new(None, "mine", "m", "x")).unwrap();
+        let mine = me.sync_snapshot().unwrap();
+        me.set_shared(&[shared.clone()]).unwrap();
+        me.set_shared(&[shared]).unwrap(); // a refresh replaces, no duplicates
+
+        let folders = me.folders().unwrap();
+        let root = folders.iter().find(|f| f.name == "Marco Spagnuolo").unwrap();
+        let clienti = folders.iter().find(|f| f.name == "Clienti").unwrap();
+        let mail = folders.iter().find(|f| f.name == "Mail").unwrap();
+        assert_eq!((root.parent_id, clienti.parent_id, mail.parent_id), (None, Some(root.id), Some(clienti.id)));
+        assert_eq!(me.entries().unwrap().len(), 2);
+        assert!(me.engine_snippets().unwrap().iter().any(|s| s.trigger == "sal"), "shared phrases expand");
+        let (sf, se) = me.shared_ids().unwrap();
+        assert_eq!((sf.len(), se.len()), (3, 1));
+
+        assert_eq!(me.sync_snapshot().unwrap(), mine, "shared copies stay out of my own sync, no tombstones");
+        me.apply_sync(&mine).unwrap();
+        assert_eq!(me.entries().unwrap().len(), 2, "my own sync keeps them");
+        me.set_shared(&[]).unwrap();
+        assert_eq!((me.entries().unwrap().len(), me.folders().unwrap().len()), (1, 0));
+        assert!(me.sync_snapshot().unwrap().tombstones.is_empty());
+    }
+
+    #[test]
     fn two_pcs_converge_newest_edit_wins_and_deletions_travel() {
         let mut pc1 = Store::open_in_memory().unwrap();
         let mut pc2 = Store::open_in_memory().unwrap();
         let f = pc1.add_folder(None, "Lavoro").unwrap();
+        pc1.set_folder_hotkey(f, Some("Ctrl+Alt+L")).unwrap();
         let mut keep = Entry::new(Some(f), "keep", "k", "v1");
         keep.id = pc1.save(&keep).unwrap();
         let tags = pc1.save(&Entry::new(Some(f), "tagged", "t", "x")).unwrap();
@@ -247,6 +344,7 @@ mod tests {
         assert_eq!(pc2.sync_snapshot().unwrap(), cloud, "PC2 has the whole library");
         assert_eq!(pc2.tags(pc2.entries().unwrap().iter().find(|e| e.name == "tagged").unwrap().id).unwrap(), ["mail"]);
         assert_eq!(pc2.folders().unwrap()[0].name, "Lavoro");
+        assert_eq!(pc2.folders().unwrap()[0].hotkey.as_deref(), Some("Ctrl+Alt+L"), "folder shortcut synced");
 
         // PC1 deletes "gone"; later PC2 edits "keep" and adds a phrase
         std::thread::sleep(std::time::Duration::from_millis(5));

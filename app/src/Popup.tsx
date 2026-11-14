@@ -1,12 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { api, type Clip, type Entry, type Lang } from "./api";
+import { api, type Clip, type Entry, type Folder, type Lang, type Settings } from "./api";
 import { resolveLang, translator } from "./i18n";
 
 type Item = Entry & { folder: string };
 /** phrases/clips = search popup; choose = several phrases share what was typed, pick one. */
 type Mode = "phrases" | "clips" | "choose";
+
+/** Position of each phrase as shown in the library: folder by folder (subfolders first), top-level phrases last. */
+function treeOrder(folders: Folder[], entries: Entry[]) {
+  const pos = new Map<number, number>();
+  const walk = (parent: number | null) => {
+    for (const f of folders.filter((x) => x.parentId === parent)) {
+      walk(f.id);
+      for (const e of entries) if (e.folderId === f.id) pos.set(e.id, pos.size);
+    }
+  };
+  walk(null);
+  for (const e of entries) if (e.folderId === null || !pos.has(e.id)) pos.set(e.id, pos.size);
+  return pos;
+}
 
 /** Lower score = better match. */
 function score(e: Item, q: string): number {
@@ -16,7 +30,7 @@ function score(e: Item, q: string): number {
   if (trig.startsWith(q)) return 1;
   if (name.startsWith(q)) return 2;
   if (name.includes(q) || trig.includes(q)) return 3;
-  if (e.body.toLowerCase().includes(q) || e.tags.some((t) => t.toLowerCase().includes(q)) || e.folder.toLowerCase().includes(q)) return 4;
+  if (e.body.toLowerCase().includes(q) || e.folder.toLowerCase().includes(q)) return 4;
   return 99;
 }
 
@@ -47,12 +61,18 @@ export function Popup() {
       const f = id === null ? undefined : byId.get(id);
       return f ? [path(f.parentId), f.name].filter(Boolean).join(" › ") : "";
     };
-    // Most used phrases first when nothing is typed.
+    // When nothing is typed, the order chosen in Settings; menus follow the same order.
+    const tree = treeOrder(lib.folders, lib.entries);
+    const order: Record<Settings["popupSort"], (a: Entry, b: Entry) => number> = {
+      uses: (a, b) => b.uses - a.uses,
+      name: (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+      tree: (a, b) => tree.get(a.id)! - tree.get(b.id)!,
+    };
     setItems(
       lib.entries
         .filter((e) => e.enabled)
         .map((e) => ({ ...e, folder: path(e.folderId) }))
-        .toSorted((a, b) => b.uses - a.uses),
+        .toSorted(order[settings.popupSort] ?? order.uses),
     );
     setClips(history);
     setLang(resolveLang(settings.lang));
@@ -88,7 +108,7 @@ export function Popup() {
   // the chooser and the search view are different elements: focus the right one after it renders
   useEffect(() => (mode === "choose" ? rootRef.current : inputRef.current)?.focus(), [mode, chooseIds]);
 
-  const chosen = useMemo(() => chooseIds.flatMap((id) => items.filter((e) => e.id === id)), [chooseIds, items]);
+  const chosen = useMemo(() => items.filter((e) => chooseIds.includes(e.id)), [chooseIds, items]); // in the items' order
   const count = mode === "phrases" ? phraseResults.length : mode === "clips" ? clipResults.length : chosen.length;
   const current = Math.min(index, Math.max(count - 1, 0));
 

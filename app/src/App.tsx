@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type Dispatch, type DragEvent, type HTMLAttributes, type MouseEvent, type RefObject, type SetStateAction } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { api, type Entry, type Folder, type Library, type Settings, type TrashItem } from "./api";
+import { api, type Entry, type Folder, type Library, type Settings, type SyncStatus, type TrashItem } from "./api";
 import { errText, resolveLang, translator, type Key, type T } from "./i18n";
 import { HotkeyInput } from "./HotkeyInput";
 import { exportLibrary, importPicked, IMPORT_ACCEPT, SettingsView } from "./Settings";
@@ -14,8 +14,8 @@ type Draft = Omit<Entry, "tags"> & { tagsText: string };
 type Tree = { folders: Map<number | null, Folder[]>; entries: Map<number | null, Entry[]> };
 type FolderOption = { id: number; label: string };
 type TrashSel = number | "all" | null; // a trashed item, the trash node itself, or nothing
-type Menu = { x: number; y: number; target: Sel; trash?: TrashSel };
-type MenuItem = [Key, () => unknown] | null;
+type Menu = { x: number; y: number; target: Sel; trash?: TrashSel; move?: boolean }; // move = folder list for "Sposta in"
+type MenuItem = [label: string, run: () => unknown, danger?: boolean] | null;
 /** Props spread on a tree row: drag source, drop target, context menu. */
 type RowAttrs = (item: Sel, dropFolder?: number | null) => HTMLAttributes<HTMLDivElement>;
 const DRAG_TYPE = "application/x-phrasex";
@@ -48,6 +48,12 @@ const TrashIcon = (
     <path d="M2.5 4h11M6 4V2.5h4V4M3.8 4l.8 9.5h6.8l.8-9.5M6.5 6.5v5M9.5 6.5v5" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
   </svg>
 );
+const AccountIcon = (
+  <svg className="icon" viewBox="0 0 16 16" aria-hidden="true">
+    <circle cx="8" cy="5.5" r="2.7" fill="none" stroke="currentColor" strokeWidth="1.3" />
+    <path d="M2.8 14c.6-2.8 2.7-4.3 5.2-4.3s4.6 1.5 5.2 4.3" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+  </svg>
+);
 const GearIcon = (
   <svg className="icon" viewBox="0 0 16 16" aria-hidden="true">
     {/* cog: thick dashed ring = teeth, ring = body */}
@@ -65,6 +71,7 @@ export default function App() {
   const [sel, setSel] = useState<Sel>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [folderName, setFolderName] = useState("");
+  const [folderHotkey, setFolderHotkey] = useState("");
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set());
@@ -72,6 +79,7 @@ export default function App() {
   const nameRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
+  const [accountMenu, setAccountMenu] = useState<{ x: number; y: number } | null>(null); // click on the name: settings / sign out
   const dragged = useRef<Item[] | null>(null); // dataTransfer can't be read during dragover
   const [multi, setMulti] = useState<Item[]>([]); // group selection (box or Ctrl+click), shown over the editor
   const [band, setBand] = useState<Band | null>(null); // selection box being drawn, in tree content coordinates
@@ -85,6 +93,19 @@ export default function App() {
   const [trashOpen, setTrashOpen] = useState(true);
   const [trashMulti, setTrashMulti] = useState<number[]>([]); // group selection inside the trash
   const loadTrash = () => api.trash().then(setTrash).catch(() => {});
+  // Google account in the toolbar (like the sync section in Settings)
+  const [sync, setSync] = useState<SyncStatus | null>(null);
+  const [loggingIn, setLoggingIn] = useState(false);
+  useEffect(() => {
+    void api.syncStatus().then(setSync).catch(() => {});
+    const un = listen<SyncStatus>("sync-status", (ev) => setSync(ev.payload));
+    return () => void un.then((f) => f());
+  }, []);
+  useEffect(() => {
+    if (!msg) return;
+    const id = setTimeout(() => setMsg(null), msg.error || msg.undo?.length ? 8000 : 3000); // the message disappears by itself
+    return () => clearTimeout(id);
+  }, [msg]);
   useEffect(() => void loadTrash(), []);
 
   async function refresh() {
@@ -153,15 +174,27 @@ export default function App() {
   const results = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
     if (!q) return null;
-    return (lib?.entries ?? []).filter((e) => [e.name, e.trigger, e.body, e.hotkey, ...e.tags].some((s) => s.toLowerCase().includes(q)));
+    const has = (s: string) => s.toLowerCase().includes(q);
+    // a matching folder is shown with its content; phrases inside it are not listed twice
+    const matched = (lib?.folders ?? []).filter((f) => has(f.name));
+    const folders = matched.filter((f) => !matched.some((o) => o.id !== f.id && isInside(f.parentId, o.id)));
+    const entries = (lib?.entries ?? []).filter(
+      (e) => !folders.some((f) => isInside(e.folderId, f.id)) && [e.name, e.trigger, e.body, e.hotkey].some(has),
+    );
+    return { folders, entries };
   }, [lib, deferredQuery]);
 
   const selectedEntry = sel?.kind === "entry" ? lib?.entries.find((e) => e.id === sel.id) : undefined;
   const selectedFolder = sel?.kind === "folder" ? lib?.folders.find((f) => f.id === sel.id) : undefined;
   const dirty = !!draft && !!selectedEntry && !sameDraft(draft, toDraft(selectedEntry));
-  const folderDirty = !!selectedFolder && folderName.trim() !== "" && folderName.trim() !== selectedFolder.name;
-  const targetFolderId = sel?.kind === "folder" ? sel.id : (selectedEntry?.folderId ?? null);
-  const popupKey = settings?.popupHotkey ?? "Ctrl+Shift+Space";
+  const folderRenamed = !!selectedFolder && folderName.trim() !== "" && folderName.trim() !== selectedFolder.name;
+  const folderDirty = folderRenamed || (!!selectedFolder && folderHotkey !== selectedFolder.hotkey);
+  // libraries shared with this user are read-only: nothing new goes inside them
+  const sharedFolders = useMemo(() => new Set((lib?.folders ?? []).filter((f) => f.shared).map((f) => f.id)), [lib]);
+  const isShared = (i: Item) => (i.kind === "folder" ? sharedFolders.has(i.id) : !!lib?.entries.find((e) => e.id === i.id)?.shared);
+  const readOnly = !!(selectedEntry?.shared || selectedFolder?.shared);
+  const selectedParent = sel?.kind === "folder" ? sel.id : (selectedEntry?.folderId ?? null);
+  const targetFolderId = selectedParent !== null && sharedFolders.has(selectedParent) ? null : selectedParent;
 
   function applySelection(next: Sel, l: Library | null) {
     setSel(next);
@@ -169,6 +202,7 @@ export default function App() {
     const f = next?.kind === "folder" ? l?.folders.find((x) => x.id === next.id) : undefined;
     setDraft(e ? toDraft(e) : null);
     setFolderName(f?.name ?? "");
+    setFolderHotkey(f?.hotkey ?? "");
   }
 
   function fail(e: unknown): false {
@@ -196,9 +230,19 @@ export default function App() {
         else setMsg({ text: t("saved"), error: false });
       }
       if (folderDirty && selectedFolder) {
-        await api.renameFolder(selectedFolder.id, folderName);
+        if (folderRenamed) await api.renameFolder(selectedFolder.id, folderName);
+        let warning: unknown = null;
+        if (folderHotkey !== selectedFolder.hotkey) {
+          try {
+            await api.setFolderHotkey(selectedFolder.id, folderHotkey);
+          } catch (e) {
+            if (!String(e).startsWith("hotkey_unavailable")) throw e;
+            warning = e; // saved, only the shortcut is taken
+          }
+        }
         l = await refresh();
-        setMsg({ text: t("saved"), error: false });
+        if (warning) fail(warning);
+        else setMsg({ text: t("saved"), error: false });
       }
       return l;
     } catch (e) {
@@ -270,7 +314,7 @@ export default function App() {
     try {
       const id = await api.saveEntry({
         id: 0, folderId, name: t("newEntry"), trigger: "", body: "",
-        immediate: false, caseSensitive: false, enabled: true, hotkey: "", tags: [], uses: 0,
+        immediate: true, caseSensitive: false, enabled: true, hotkey: "", tags: [], uses: 0, shared: false, // user: always expand right away
       });
       expand(folderId);
       applySelection({ kind: "entry", id }, await refresh());
@@ -297,7 +341,7 @@ export default function App() {
   /** Moves to the trash right away, no confirmation: the status bar offers Undo (the trash keeps a snapshot). */
   async function remove(target: Sel = sel) {
     const group = multi.length && (!target || multiKeys.has(keyOf(target))) ? topLevel(multi) : null;
-    const items = group ?? (target ? [target] : []);
+    const items = (group ?? (target ? [target] : [])).filter((i) => !isShared(i));
     if (!items.length) return;
     try {
       for (const it of items) {
@@ -386,7 +430,8 @@ export default function App() {
   }
 
   function canDrop(items: Item[] | null, folderId: number | null) {
-    if (!items?.length || items.some((i) => i.kind === "folder" && isInside(folderId, i.id))) return false;
+    if (!items?.length || items.some((i) => isShared(i) || (i.kind === "folder" && isInside(folderId, i.id)))) return false;
+    if (folderId !== null && sharedFolders.has(folderId)) return false;
     return items.some((i) => parentOf(i) !== folderId);
   }
 
@@ -439,23 +484,28 @@ export default function App() {
     setMenu({ x: e.clientX, y: e.clientY, target });
   }
 
+  /** Ctrl+click: add to / remove from the group instead of opening. */
+  function toggleMulti(item: Item) {
+    const base = multi.length ? multi : sel ? [sel] : [];
+    const k = keyOf(item);
+    setMulti(base.some((i) => keyOf(i) === k) ? base.filter((i) => keyOf(i) !== k) : [...base, item]);
+  }
+
   const rowAttrs: RowAttrs = (item, dropFolder) => {
     const attrs: HTMLAttributes<HTMLDivElement> = {
       onContextMenu: (e) => openMenu(e, item),
       onClickCapture: (e) => {
         if (!item || !(e.ctrlKey || e.metaKey)) return;
         e.preventDefault();
-        e.stopPropagation(); // Ctrl+click: add to / remove from the group instead of opening
-        const base = multi.length ? multi : sel ? [sel] : [];
-        const k = keyOf(item);
-        setMulti(base.some((i) => keyOf(i) === k) ? base.filter((i) => keyOf(i) !== k) : [...base, item]);
+        e.stopPropagation();
+        toggleMulti(item);
       },
     };
     if (dropFolder === undefined) return attrs; // search results: menu only
     const key = dropFolder === null ? "root" : `f${dropFolder}`;
     return {
       ...attrs,
-      draggable: true,
+      draggable: !(item && isShared(item)),
       onDragStart: (e) => {
         e.stopPropagation();
         dragged.current = item && multiKeys.has(keyOf(item)) ? topLevel(multi) : item ? [item] : null;
@@ -482,45 +532,55 @@ export default function App() {
     setMsg(await exportLibrary(t, folderId));
   }
 
-  function menuItems(target: Sel, trashTarget?: TrashSel): MenuItem[] {
-    if (trashTarget === "all") return [["trashClear", () => deleteForever("all")]];
+  function menuItems(m: Menu): MenuItem[] {
+    const mi = (k: Key, run: () => unknown): MenuItem => [t(k), run, DANGER.has(k)];
+    const { target, trash: trashTarget } = m;
+    if (trashTarget === "all") return [mi("trashClear", () => deleteForever("all"))];
     if (typeof trashTarget === "number") {
       const ids = trashMulti.length > 1 && trashMulti.includes(trashTarget) ? trashMulti : [trashTarget];
-      return [["trashRestore", () => restoreTrash(ids)], null, ["trashDeleteForever", () => deleteForever(ids)]];
+      return [mi("trashRestore", () => restoreTrash(ids)), null, mi("trashDeleteForever", () => deleteForever(ids))];
     }
-    if (target && multiKeys.has(keyOf(target)) && multi.length > 1) {
-      return [["ctxDeleteSelected", () => remove(target)]];
+    const inGroup = !!target && multiKeys.has(keyOf(target)) && multi.length > 1;
+    if (target && !inGroup && isShared(target)) return []; // read-only: no menu
+    const moving = (inGroup ? topLevel(multi) : target ? [target] : []).filter((i) => !isShared(i));
+    if (m.move) {
+      const dests: [string, number | null][] = [[t("moveRoot"), null], ...folderOptions.map((o): [string, number] => [o.label.replace(/^ +/, (sp) => "\u00a0".repeat(sp.length)), o.id])];
+      return dests.filter(([, id]) => canDrop(moving, id)).map(([label, id]) => [label, () => moveTo(moving, id)]);
     }
+    const moveItem = mi("ctxMoveTo", () => setMenu({ ...m, move: true })); // runs after the menu closes: reopens it as the folder list
+    if (inGroup) return [moveItem, null, mi("ctxDeleteSelected", () => remove(target))];
     if (!target) {
       return [
-        ["ctxNewRootFolder", () => newFolder(null)],
-        ["newEntry", () => newEntry(null)],
+        mi("ctxNewRootFolder", () => newFolder(null)),
+        mi("newEntry", () => newEntry(null)),
         null,
-        ["ctxImport", () => fileRef.current?.click()],
-        ["ctxExportAll", () => exportData()],
+        mi("ctxImport", () => fileRef.current?.click()),
+        mi("ctxExportAll", () => exportData()),
       ];
     }
     if (target.kind === "folder") {
       return [
-        ["ctxNewSubfolder", () => newFolder(target.id)],
-        ["ctxNewPhraseHere", () => newEntry(target.id)],
-        ["ctxNewRootFolder", () => newFolder(null)],
+        mi("ctxNewSubfolder", () => newFolder(target.id)),
+        mi("ctxNewPhraseHere", () => newEntry(target.id)),
+        mi("ctxNewRootFolder", () => newFolder(null)),
         null,
-        ["ctxRename", () => rename(target)],
-        ["ctxExportFolder", () => exportData(target.id)],
+        mi("ctxRename", () => rename(target)),
+        moveItem,
+        mi("ctxExportFolder", () => exportData(target.id)),
         null,
-        ["delete", () => remove(target)],
+        mi("delete", () => remove(target)),
       ];
     }
     const folderId = lib?.entries.find((e) => e.id === target.id)?.folderId ?? null;
     return [
-      ["ctxNewPhraseHere", () => newEntry(folderId)],
-      ["ctxNewRootFolder", () => newFolder(null)],
+      mi("ctxNewPhraseHere", () => newEntry(folderId)),
+      mi("ctxNewRootFolder", () => newFolder(null)),
       null,
-      ["ctxRename", () => rename(target)],
-      ["ctxDuplicate", () => duplicate(target.id)],
+      mi("ctxRename", () => rename(target)),
+      mi("ctxDuplicate", () => duplicate(target.id)),
+      moveItem,
       null,
-      ["delete", () => remove(target)],
+      mi("delete", () => remove(target)),
     ];
   }
 
@@ -543,6 +603,17 @@ export default function App() {
   function bandPoint(nav: HTMLElement, e: { clientX: number; clientY: number }) {
     const r = nav.getBoundingClientRect();
     return { x: e.clientX - r.left + nav.scrollLeft, y: e.clientY - r.top + nav.scrollTop };
+  }
+
+  async function googleLogin() {
+    setLoggingIn(true);
+    try {
+      setSync(await api.syncLogin());
+    } catch (e) {
+      if (String(e) !== "google_login_cancelled") fail(e);
+    } finally {
+      setLoggingIn(false);
+    }
   }
 
   async function togglePause() {
@@ -586,8 +657,8 @@ export default function App() {
           <img src={logo} alt="" width={23} height={23} />
           <span>Phrase X</span>
         </div>
-        <button className="accent" onClick={() => newEntry()}>{PhraseIcon}<span>{t("newEntry")}</span></button>
-        <button onClick={() => newFolder()}>{FolderIcon}<span>{t("newFolder")}</span></button>
+        <button className="accent" title={t("newEntry")} onClick={() => newEntry()}>{PhraseIcon}<span>{t("newEntry")}</span></button>
+        <button title={t("newFolder")} onClick={() => newFolder()}>{FolderIcon}<span>{t("newFolder")}</span></button>
         <button onClick={() => remove()} disabled={!sel && !multi.length}>{t("delete")}</button>
         <button onClick={() => fileRef.current?.click()} title={t("importTitle")}>{t("importShort")}</button>
         <button onClick={() => exportData()} title={t("exportTitle")}>{t("exportShort")}</button>
@@ -601,7 +672,29 @@ export default function App() {
           aria-label={t("search")}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <button className={view === "settings" ? "on" : undefined} onClick={() => setView(view === "settings" ? "library" : "settings")}>
+        <span className="spacer" />
+        {sync?.configured ? (
+          sync.email ? (
+            <button
+              className="account"
+              title={sync.email}
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect();
+                setAccountMenu({ x: r.left, y: r.bottom + 4 });
+              }}
+            >
+              {AccountIcon}
+              <span>{sync.name || sync.email}</span>
+            </button>
+          ) : (
+            <button onClick={() => void (loggingIn ? api.syncCancelLogin() : googleLogin())}>
+              {AccountIcon}
+              <span>{loggingIn ? t("syncLoggingIn") : t("syncLogin")}</span>
+            </button>
+          )
+        ) : null}
+        {lib?.paused ? <button className="paused-badge" onClick={togglePause} title={t("resume")}>{t("paused")}</button> : null}
+        <button className={view === "settings" ? "on" : undefined} title={t("settings")} onClick={() => setView(view === "settings" ? "library" : "settings")}>
           {GearIcon}<span>{t("settings")}</span>
         </button>
       </header>
@@ -611,7 +704,8 @@ export default function App() {
           className={dropKey === "root" ? "tree drop" : "tree"}
           aria-label={t("search")}
           onPointerDown={(e) => {
-            if (e.target !== e.currentTarget || e.button !== 0 || results) return; // empty area only
+            // empty area of the tree or of a row (beside the name); the name itself is clicked or dragged
+            if (e.button !== 0 || results || (e.target as Element).closest("button")) return;
             e.currentTarget.setPointerCapture(e.pointerId);
             const { x, y } = bandPoint(e.currentTarget, e);
             setBand({ x0: x, y0: y, x1: x, y1: y });
@@ -630,10 +724,13 @@ export default function App() {
             const { items: hits, trashed } = bandHits(e.currentTarget, band);
             const click = Math.abs(band.x1 - band.x0) < 4 && Math.abs(band.y1 - band.y0) < 4;
             setBand(null);
-            if (!click && trashed.length) void openTrash(trashed.length === 1 ? trashed[0] : "all", trashed.length > 1 ? trashed : []);
+            const ctrl = click && (e.ctrlKey || e.metaKey);
+            if (ctrl && hits[0]) toggleMulti(hits[0]);
+            else if (ctrl && trashed[0]) toggleTrash(trashed[0]);
+            else if (trashed.length) void openTrash(trashed.length === 1 ? trashed[0] : "all", trashed.length > 1 ? trashed : []);
             else if (click || hits.length < 2) {
               setMulti([]);
-              void select(click ? null : (hits[0] ?? null)); // plain click on empty area: new items go to the top level
+              void select(hits[0] ?? null); // click beside a name opens it; on the empty area new items go to the top level
             }
           }}
           onContextMenu={(e) => openMenu(e, null)}
@@ -650,8 +747,11 @@ export default function App() {
             />
           ) : null}
           {results ? (
-            results.length ? (
-              results.map((e) => <EntryRow key={e.id} entry={e} depth={0} selected={isSel("entry", e.id)} onSelect={select} attrs={rowAttrs({ kind: "entry", id: e.id })} t={t} />)
+            results.folders.length || results.entries.length ? (
+              <>
+                {results.folders.map((f) => <TreeFolder key={f.id} folder={f} depth={0} {...treeProps} />)}
+                {results.entries.map((e) => <EntryRow key={e.id} entry={e} depth={0} selected={isSel("entry", e.id)} onSelect={select} attrs={rowAttrs({ kind: "entry", id: e.id })} t={t} />)}
+              </>
             ) : (
               <p className="muted pad">{t("noResults")}</p>
             )
@@ -680,7 +780,18 @@ export default function App() {
             </>
           )}
         </nav>
-        {menu ? <ContextMenu menu={menu} items={menuItems(menu.target, menu.trash)} onClose={() => setMenu(null)} t={t} /> : null}
+        {accountMenu ? (
+          <ContextMenu
+            menu={{ ...accountMenu, target: null }}
+            items={[
+              [t("settings"), () => setView("settings")],
+              null,
+              [t("syncLogout"), () => api.syncLogout().then(setSync).catch(fail), true],
+            ]}
+            onClose={() => setAccountMenu(null)}
+          />
+        ) : null}
+        {menu && menuItems(menu).length ? <ContextMenu key={menu.move ? "move" : "main"} menu={menu} items={menuItems(menu)} onClose={() => setMenu(null)} /> : null}
 
         <section className="detail">
           {view === "settings" && settings ? (
@@ -690,7 +801,6 @@ export default function App() {
           ) : multi.length > 1 ? (
             <div className="editor">
               <h2>{t("selectedCount", { n: group.length })}</h2>
-              <p className="muted">{t("groupHint")}</p>
               <label className="field">
                 <span>{t("moveTo")}</span>
                 <select value={moveTarget} onChange={(e) => setMoveTarget(e.target.value)}>
@@ -705,65 +815,40 @@ export default function App() {
               </div>
             </div>
           ) : draft ? (
-            <Editor draft={draft} setDraft={setDraft} folderOptions={folderOptions} dirty={dirty} nameRef={nameRef} onSave={saveCurrent} entries={lib?.entries ?? []} t={t} />
+            <Editor draft={draft} setDraft={setDraft} folderOptions={folderOptions} dirty={dirty} readOnly={readOnly} nameRef={nameRef} onSave={saveCurrent} entries={lib?.entries ?? []} t={t} />
           ) : selectedFolder ? (
             <form className="editor" onSubmit={(e) => { e.preventDefault(); void saveCurrent(); }}>
+              <fieldset className="contents" disabled={readOnly}>
               <label className="field">
                 <span>{t("folderName")}</span>
                 <input ref={nameRef} value={folderName} onChange={(e) => setFolderName(e.target.value)} />
               </label>
-              <p className="muted">{t("folderHint")}</p>
+              <label className="field">
+                <span>{t("hotkey")}</span>
+                <HotkeyInput value={folderHotkey} placeholder={t("hotkeyHint")} onChange={setFolderHotkey} />
+              </label>
+              {readOnly ? null : <p className="muted">{t("folderHotkeyHint")}</p>}
               <div className="row end">
-                <button className="primary" type="submit" disabled={!folderDirty}>{t("save")}</button>
+                {readOnly ? <span className="muted">{t("readOnly")}</span> : <button className="primary" type="submit" disabled={!folderDirty}>{t("save")}</button>}
               </div>
+              </fieldset>
             </form>
           ) : (
-            <Welcome t={t} popupKey={popupKey} entries={lib?.entries ?? []} />
+            <div className="welcome">
+              <img src={logo} alt="" width={68} height={68} />
+              <h1>{t("emptyTitle")}</h1>
+              <p className="muted">{t("emptyHint")}</p>
+            </div>
           )}
         </section>
       </main>
 
-      <footer className="status">
-        <span>{t("count", { n: lib?.entries.length ?? 0 })}</span>
-        <button className={lib?.paused ? "pill off" : "pill on"} onClick={togglePause}>
-          {lib?.paused ? t("paused") : t("active")}
-        </button>
-        <span className="muted">{t("popupKey", { key: popupKey })}</span>
-        {msg ? (
-          <span className={msg.error ? "msg error" : "msg"} role="status">
-            {msg.text}
-            {msg.undo?.length ? <button className="link" onClick={() => void undoDelete(msg.undo!)}>{t("undo")}</button> : null}
-          </span>
-        ) : null}
-      </footer>
-    </div>
-  );
-}
-
-function Welcome({ t, popupKey, entries }: { t: T; popupKey: string; entries: Entry[] }) {
-  const tips: Key[] = ["tip1", "tip2", "tip3", "tip4"];
-  let uses = 0;
-  let chars = 0;
-  for (const e of entries) {
-    uses += e.uses;
-    chars += e.uses * Math.max(0, e.body.length - e.trigger.length);
-  }
-  const top = entries.filter((e) => e.uses > 0).toSorted((a, b) => b.uses - a.uses).slice(0, 3);
-  return (
-    <div className="welcome">
-      <img src={logo} alt="" width={68} height={68} />
-      <h1>{t("emptyTitle")}</h1>
-      <p className="muted">{t("emptyHint")}</p>
-      {uses > 0 ? (
-        <div className="stats">
-          <strong>{t("statsTitle")}</strong>
-          <span>{t("stats", { n: uses, chars: chars.toLocaleString() })}</span>
-          <span className="muted">{t("statsTop")} {top.map((e) => `${e.name} (${e.uses})`).join(" · ")}</span>
+      {msg ? (
+        <div className={msg.error ? "toast error" : "toast"} role="status">
+          {msg.text}
+          {msg.undo?.length ? <button className="link" onClick={() => void undoDelete(msg.undo!)}>{t("undo")}</button> : null}
         </div>
       ) : null}
-      <ul>
-        {tips.map((k) => <li key={k}>{t(k, { key: popupKey })}</li>)}
-      </ul>
     </div>
   );
 }
@@ -779,7 +864,7 @@ type TreeProps = {
   t: T;
 };
 
-function ContextMenu({ menu, items, onClose, t }: { menu: Menu; items: MenuItem[]; onClose: () => void; t: T }) {
+function ContextMenu({ menu, items, onClose }: { menu: Menu; items: MenuItem[]; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => ref.current?.querySelector("button")?.focus(), []);
   // keep it on screen (~28px per row, 220px wide)
@@ -805,8 +890,8 @@ function ContextMenu({ menu, items, onClose, t }: { menu: Menu; items: MenuItem[
       >
         {items.map((it, i) =>
           it ? (
-            <button key={it[0]} role="menuitem" className={DANGER.has(it[0]) ? "danger" : ""} onClick={() => { onClose(); void it[1](); }}>
-              {t(it[0])}
+            <button key={i} role="menuitem" className={it[2] ? "danger" : ""} onClick={() => { onClose(); void it[1](); }}>
+              {it[0]}
             </button>
           ) : (
             <hr key={`sep${i}`} />
@@ -849,8 +934,8 @@ function TrashNode({ items, open, selected, group, onToggle, onSelect, onCtrl, o
         <button className="label" onClick={() => onSelect("all")} onDoubleClick={onToggle}>
           {TrashIcon}
           <span className="name">{t("trashTitle")}</span>
-          {items.length ? <kbd>{items.length}</kbd> : null}
         </button>
+        {items.length ? <kbd>{items.length}</kbd> : null}
       </div>
       {open
         ? items.map((it) => (
@@ -947,21 +1032,23 @@ function TrashView({ items, selected, group, onSelect, onCancelGroup, onRestore,
 function TreeFolder({ folder, depth, ...p }: TreeProps & { folder: Folder; depth: number }) {
   const open = !p.collapsed.has(folder.id);
   const selected = p.isSel("folder", folder.id);
+  const { draggable, ...attrs } = p.row({ kind: "folder", id: folder.id }, folder.id); // drag from the name: beside it = box selection
   return (
     <>
       <div
         className={["node", selected ? "selected" : "", p.dropKey === `f${folder.id}` ? "drop" : ""].join(" ")}
         style={{ paddingLeft: 6 + depth * 16 }}
         data-key={`f${folder.id}`}
-        {...p.row({ kind: "folder", id: folder.id }, folder.id)}
+        {...attrs}
       >
         <button className={open ? "chevron open" : "chevron"} aria-label={folder.name} aria-expanded={open} onClick={() => p.onToggle(folder.id)}>
           ›
         </button>
-        <button className="label" onClick={() => p.onSelect({ kind: "folder", id: folder.id })} onDoubleClick={() => p.onToggle(folder.id)}>
+        <button className="label" draggable={draggable} onClick={() => p.onSelect({ kind: "folder", id: folder.id })} onDoubleClick={() => p.onToggle(folder.id)}>
           {FolderIcon}
           <span className="name">{folder.name}</span>
         </button>
+        {folder.hotkey ? <kbd>{folder.hotkey}</kbd> : null}
       </div>
       {open ? (
         <>
@@ -979,13 +1066,14 @@ type EntryRowProps = { entry: Entry; depth: number; selected: boolean; onSelect:
 
 function EntryRow({ entry, depth, selected, onSelect, attrs, t }: EntryRowProps) {
   const cls = ["node", selected ? "selected" : "", entry.enabled ? "" : "disabled"].join(" ");
+  const { draggable, ...rest } = attrs; // drag from the name: beside it = box selection
   return (
-    <div className={cls} style={{ paddingLeft: 6 + depth * 16 + 18 }} data-key={`e${entry.id}`} {...attrs}>
-      <button className="label" onClick={() => onSelect({ kind: "entry", id: entry.id })}>
+    <div className={cls} style={{ paddingLeft: 6 + depth * 16 + 18 }} data-key={`e${entry.id}`} {...rest}>
+      <button className="label" draggable={draggable} onClick={() => onSelect({ kind: "entry", id: entry.id })}>
         {PhraseIcon}
         <span className="name">{entry.name || t("unnamed")}</span>
-        {entry.trigger ? <kbd>{entry.trigger}</kbd> : entry.hotkey ? <kbd>{entry.hotkey}</kbd> : null}
       </button>
+      {entry.trigger ? <kbd>{entry.trigger}</kbd> : entry.hotkey ? <kbd>{entry.hotkey}</kbd> : null}
     </div>
   );
 }
@@ -998,6 +1086,7 @@ type EditorProps = {
   nameRef: RefObject<HTMLInputElement>;
   onSave: () => unknown;
   entries: Entry[];
+  readOnly: boolean;
   t: T;
 };
 
@@ -1025,7 +1114,7 @@ const FIELD_TEMPLATES: [Key, Key][] = [
   ["fieldDate", "fieldDateLabel"],
 ];
 
-function Editor({ draft, setDraft, folderOptions, dirty, nameRef, onSave, entries, t }: EditorProps) {
+function Editor({ draft, setDraft, folderOptions, dirty, readOnly, nameRef, onSave, entries, t }: EditorProps) {
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   // Other phrases with the same abbreviation / shortcut: typing it opens a menu to pick one.
   const sharing = (key: "trigger" | "hotkey") => {
@@ -1049,6 +1138,7 @@ function Editor({ draft, setDraft, folderOptions, dirty, nameRef, onSave, entrie
 
   return (
     <form className="editor" onSubmit={(e) => { e.preventDefault(); onSave(); }}>
+      <fieldset className="contents" disabled={readOnly}>
       <label className="field">
         <span>{t("name")}</span>
         <input ref={nameRef} value={draft.name} onChange={(e) => set("name", e.target.value)} />
@@ -1061,7 +1151,6 @@ function Editor({ draft, setDraft, folderOptions, dirty, nameRef, onSave, entrie
         <span className="muted">{t("insertMacro")}</span>
         <button type="button" onClick={() => insert("{#date}")}>{t("macroDate")}</button>
         <button type="button" onClick={() => insert("{#time}")}>{t("macroTime")}</button>
-        <button type="button" onClick={() => insert("{#clipboard}")}>{t("macroClipboard")}</button>
         <select
           aria-label={t("macroField")}
           value=""
@@ -1090,13 +1179,6 @@ function Editor({ draft, setDraft, folderOptions, dirty, nameRef, onSave, entrie
           <input value={draft.trigger} placeholder={t("triggerHint")} spellCheck={false} data-noexpand onChange={(e) => set("trigger", e.target.value)} />
         </label>
         <label className="field">
-          <span>{t("mode")}</span>
-          <select value={draft.immediate ? "i" : "w"} onChange={(e) => set("immediate", e.target.value === "i")}>
-            <option value="w">{t("modeWord")}</option>
-            <option value="i">{t("modeImmediate")}</option>
-          </select>
-        </label>
-        <label className="field">
           <span>{t("hotkey")}</span>
           <HotkeyInput value={draft.hotkey} placeholder={t("hotkeyHint")} onChange={(v) => set("hotkey", v)} />
         </label>
@@ -1116,10 +1198,6 @@ function Editor({ draft, setDraft, folderOptions, dirty, nameRef, onSave, entrie
             {folderOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
           </select>
         </label>
-        <label className="field">
-          <span>{t("tags")}</span>
-          <input value={draft.tagsText} placeholder={t("tagsHint")} onChange={(e) => set("tagsText", e.target.value)} />
-        </label>
       </div>
       <div className="row checks">
         <label className="check">
@@ -1132,8 +1210,9 @@ function Editor({ draft, setDraft, folderOptions, dirty, nameRef, onSave, entrie
         </label>
         <span className="spacer" />
         {dirty ? <span className="muted">{t("unsaved")}</span> : null}
-        <button className="primary" type="submit" disabled={!dirty}>{t("save")}</button>
+        {readOnly ? <span className="muted">{t("readOnly")}</span> : <button className="primary" type="submit" disabled={!dirty}>{t("save")}</button>}
       </div>
+      </fieldset>
     </form>
   );
 }

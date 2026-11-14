@@ -62,7 +62,7 @@ function CloudSync({ t }: { t: T }) {
   }
 
   if (!st) return null;
-  const error = fail || (st.error ? errText(t, st.error) : "");
+  const error = fail || (st.error ? errText(t, st.error) : "") || (st.shareError ? errText(t, st.shareError) : "");
   return (
     <>
       <h2>{t("settingsSync")}</h2>
@@ -115,6 +115,13 @@ export function SettingsView({ initial, onSaved, onImported, t }: { initial: Set
     void api.runningApps().then(setRecent);
   }, []);
 
+  const [newEmail, setNewEmail] = useState("");
+  const addEmail = (text: string) => {
+    const add = text.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter((x) => x.includes("@") && !s.shareWith.includes(x));
+    if (add.length) setS({ ...s, shareWith: [...s.shareWith, ...add] });
+    setNewEmail("");
+  };
+
   const addApp = (name: string) => {
     const n = name.trim().toLowerCase();
     if (n && !s.excludedApps.includes(n)) setS({ ...s, excludedApps: [...s.excludedApps, n] });
@@ -126,6 +133,7 @@ export function SettingsView({ initial, onSaved, onImported, t }: { initial: Set
       await api.saveSettings(s);
       setMsg({ text: t("saved"), error: false });
       onSaved(s);
+      if (s.shareWith.join() !== initial.shareWith.join()) void api.syncNow(); // publish the new list now, not in a few minutes
     } catch (e) {
       setMsg({ text: errText(t, e), error: true });
       onSaved(s); // saved anyway, only the shortcut registration failed
@@ -137,6 +145,34 @@ export function SettingsView({ initial, onSaved, onImported, t }: { initial: Set
   return (
     <form className="editor settings" onSubmit={(e) => { e.preventDefault(); void save(); }}>
       <CloudSync t={t} />
+
+      <h2>{t("settingsShare")}</h2>
+      <p className="muted">{t("shareHint")}</p>
+      <div className="chips" hidden={!s.shareWith.length}>
+        {s.shareWith.map((a) => (
+          <span key={a} className="chip">
+            {a}
+            <button type="button" aria-label={`${t("remove")} ${a}`} onClick={() => setS({ ...s, shareWith: s.shareWith.filter((x) => x !== a) })}>×</button>
+          </span>
+        ))}
+      </div>
+      <div className="row">
+        <input
+          className="grow-input"
+          type="email"
+          data-noexpand
+          value={newEmail}
+          placeholder={t("shareAdd")}
+          onChange={(e) => setNewEmail(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addEmail(newEmail);
+            }
+          }}
+        />
+        <button type="button" onClick={() => addEmail(newEmail)} disabled={!newEmail.includes("@")}>{t("add")}</button>
+      </div>
 
       <h2>{t("settingsGeneral")}</h2>
       <div className="row">
@@ -151,6 +187,17 @@ export function SettingsView({ initial, onSaved, onImported, t }: { initial: Set
           <span>{t("popupHotkey")}</span>
           <HotkeyInput value={s.popupHotkey} placeholder={t("hotkeyHint")} onChange={(v) => setS({ ...s, popupHotkey: v })} />
         </label>
+      </div>
+      <div className="row">
+        <label className="field">
+          <span>{t("popupSort")}</span>
+          <select value={s.popupSort} onChange={(e) => setS({ ...s, popupSort: e.target.value as Settings["popupSort"] })}>
+            <option value="uses">{t("popupSortUses")}</option>
+            <option value="name">{t("popupSortName")}</option>
+            <option value="tree">{t("popupSortTree")}</option>
+          </select>
+        </label>
+        <span className="field" />
       </div>
       <label className="check">
         <input type="checkbox" checked={s.autostart} onChange={(e) => setS({ ...s, autostart: e.target.checked })} />
