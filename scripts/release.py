@@ -1,6 +1,6 @@
 """Publishes the built installer as a GitHub Release for the auto-update (run scripts/build.sh first).
 Usage: python scripts/release.py "short notes"   -- outward-facing: only when the user said yes."""
-import datetime, json, pathlib, subprocess, sys
+import datetime, json, pathlib, shutil, subprocess, sys
 
 root = pathlib.Path(__file__).resolve().parent.parent
 version = json.loads((root / "app/src-tauri/tauri.conf.json").read_text())["version"]
@@ -16,5 +16,7 @@ latest = {
 }
 out = root / "target/release/latest.json"
 out.write_text(json.dumps(latest, indent=2))
-subprocess.run(["gh", "release", "create", f"v{version}", f"{setup}#{asset}", str(out),
+upload = out.with_name(asset)  # gh keeps the file's own name ("#label" only changes the label)
+shutil.copyfile(setup, upload)
+subprocess.run(["gh", "release", "create", f"v{version}", str(upload), str(out),
                 "--repo", "Assistenza-Serenergy/phrasex", "--title", f"Phrase X {version}", "--notes", latest["notes"]], check=True)

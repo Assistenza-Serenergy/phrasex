@@ -90,5 +90,5 @@ Open-source text expander (clean-room alternative to PhraseExpress) for X Holdin
 - Privacy page: mentions settings on Drive; it does NOT mention Firebase sharing yet (ask the user).
 
 ## Still open
-- 23: first GitHub Release not published yet (ask the user). Colleagues install 0.2.0 by hand once; later versions update themselves.
+- 23: release v0.2.0 published 2026-11-15 (user said yes): https://github.com/Assistenza-Serenergy/phrasex/releases/tag/v0.2.0. Colleagues install 0.2.0 by hand once; later versions update themselves (bump the version, build, ask, release).
 - Not now / no: 13 (PhraseExpress import), 14, 15, 16, 18, 19, 21, 22.
