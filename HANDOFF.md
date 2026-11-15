@@ -1,4 +1,4 @@
-# Phrase X — handoff (2026-11-08)
+# Phrase X — handoff (2026-11-15)
 
 Open-source text expander (clean-room alternative to PhraseExpress) for X Holding. MIT, no limits, IT/EN UI.
 
@@ -72,29 +72,23 @@ Open-source text expander (clean-room alternative to PhraseExpress) for X Holdin
   - Phrase X runs elevated, so computer use can't click in it (UIPI); settings can be changed from the user's Terminal panel with python + sqlite3 on %APPDATA%\PhraseX\phrasex.db (the app reads them on the next sync round).
   - Store V8: `shared` column (owner uid) on folder/snippet; tombstone triggers skip shared rows; sync_snapshot/apply_sync ignore them; `set_shared` replaces all shared rows (uids `s:{owner}[:{uid}]`, no hotkeys/tags). Backend guard `own_only` refuses edits of shared items and putting own items inside shared folders (the next refresh would delete them). UI: fieldset disabled + "Condivisa con te: sola lettura", no drag/menu on shared rows. Export skips shared. Sign-out clears shared copies.
 
-## Next work, approved by the user (2026-11-15) — do in this order, commit + push after each group
-Text (no AI slop, short, plain Italian):
-1. Cut long hints to half a line or move them to tooltips: run as admin, excluded programs, backup/CSV, sharing, folder shortcut, trash, "abbreviazione usata anche da…".
-2. Shorter settings headings ("Account Google e sincronizzazione" → "Account", "Aiuto alla scrittura" → "Correzioni"). Keep the button text "Accedi con Google" (user likes it).
-3. Short toasts ("Esportato", path only in a tooltip).
-4. One-line errors (e.g. Google Drive checkbox → "Spunta tutte le caselle di Google e riprova").
-Look & ease:
-5. Autosave like PhraseExpress: no "Salva" / "Modifiche non salvate" in the phrase editor, folder editor and Settings.
-6. NOT decided: Settings split into side tabs (Generale, Account e condivisione, Correzioni, Appunti, Programmi esclusi, Dati). The user didn't understand it: explain in one line and ask before doing it.
-7. REJECTED: keep Importa / Esporta in the toolbar; keep the toolbar sign-in button.
-8. Icons in one consistent style (same stroke/size), cleaner tree, quieter abbreviation chip.
-9. Same style for the search popup, the chooser menu and the fill-in form window.
-10. Check the light theme and contrasts (only dark was ever seen).
-11. In-app shortcuts: Ctrl+N new phrase, Ctrl+Shift+N new folder, Ctrl+F search, F2 rename, arrows + Enter in the tree. Hovering "Nuova frase" / "Nuova cartella" must show the shortcut in the tooltip.
-12. Copy/paste phrases and folders in the tree (Ctrl+C / Ctrl+V).
-17. Colour per folder.
-20. Images in the clipboard history.
-Distribution:
-23. Auto-update for colleagues via GitHub Releases (Tauri updater; publishing a release is outward-facing: ask the user before each one).
-24. Sync the settings between the user's PCs too.
-25. Nicer installer, with an installer logo: black box with white borders in the Phrase X style with the X inside (classic "installer box" look). Show a preview (scripts/icon-preview.py style) before building it.
-26. Update the website (docs/index.html) with real screenshots.
-Cleanup:
-27. Remove dead code: statistics, tags, the "after space" expansion mode option.
-28. Remove the debug log lines that are no longer needed ("login tab: …" etc.).
-Not now / no: 13 (PhraseExpress import: the user will ask to move phrases by hand later), 14, 15, 16, 18, 19, 21, 22.
+## Done 2026-11-15 (approved list 1-28, except 13-22 "not now")
+- Texts: hints moved to tooltips (`title`), short headings, toasts ("Esportato", path in the tooltip), one-line errors.
+- Autosave everywhere (phrase editor, folder editor, Settings): 600 ms after the last change, saves chained in a ref; the draft is never overwritten by the saved copy (would eat spaces while typing). No Save button, no Ctrl+S.
+- Settings in side tabs (Generale, Account e condivisione, Correzioni, Appunti, Programmi esclusi, Dati), user said yes.
+- Icons: `app/src/icons.tsx` (16 px, 1.3 stroke, round ends), shared by tree, toolbar and popup. Quiet abbreviation chip. Popup/chooser/form in the same look. Light theme checked (contrast >= 4.5 text, 3:1 field edges).
+- Shortcuts: Ctrl+N, Ctrl+Shift+N, Ctrl+F, F2, Del, arrows/Enter in the tree, Ctrl+C / Ctrl+V (backend `paste_items`: copies keep abbreviations, drop shortcuts; also in the context menu).
+- Folder colour: store V10 `folder.color`, synced, kept in shares/trash/exports; palette in the folder editor.
+- Clipboard images: store V11 `clip.image` (PNG, max 20 images, text column holds a dedup key), `clipimg.rs` DIB<->PNG, listener `copied_image` / `inject_image`.
+- Auto-update (Tauri updater): checks GitHub `releases/latest/download/latest.json` at start, toolbar button "Aggiorna". Signing key `%USERPROFILE%/.tauri/phrasex-updater.key` (no password, outside the repo: the user must back it up). Build ONLY with `sh scripts/build.sh` (sets the key env). Publish with `python scripts/release.py "notes"` (gh release v<version> + latest.json): outward-facing, ask the user first. Version now 0.2.0 (tauri.conf.json, Cargo workspace, package.json); bump all three for each release.
+- Settings sync: `Library.settings` (SYNCED_SETTINGS, newest `settings_updated_at` wins; autostart/admin stay local; never sent to share readers).
+- Installer art: `scripts/make-installer-art.py` -> `app/src-tauri/installer/` (icon, header, sidebar), approved by the user.
+- Website: real screenshots in `docs/img`, taken from the UI with a fake backend: `.claude/launch.json` "shots" (vite.shots.config.ts + app/shots/*), then headless Chrome (`--screenshot`; popup via shots/frame.html because headless has a minimum width).
+- Cleanup: tags removed (store V12 drops the tables; SyncSnippet.tags kept empty for old versions), new phrases and CSV imports are always "subito" (old word-end phrases keep working), status-bar CSS and the debug log (`diag`) removed.
+- Reinstall: `explorer.exe 'C:/Users/Marco/Desktop/PhraseX/scripts/reinstall.vbs'` with an absolute path (a relative one silently does nothing). reinstall.cmd picks the newest *-setup.exe.
+- Python edit scripts in Git Bash: backslashes inside heredocs get mangled; write the script to the scratchpad with the Write tool instead.
+- Privacy page: mentions settings on Drive; it does NOT mention Firebase sharing yet (ask the user).
+
+## Still open
+- 23: first GitHub Release not published yet (ask the user). Colleagues install 0.2.0 by hand once; later versions update themselves.
+- Not now / no: 13 (PhraseExpress import), 14, 15, 16, 18, 19, 21, 22.
