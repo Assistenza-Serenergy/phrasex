@@ -114,10 +114,55 @@ function CloudSync({ t }: { t: T }) {
   );
 }
 
+/** Removable chips plus a field to add more (Enter or "Aggiungi"); `parse` turns the typed text into new items. */
+function ListEditor({ items, onChange, parse, placeholder, email, t }: {
+  items: string[];
+  onChange: (items: string[]) => void;
+  parse: (text: string) => string[];
+  placeholder: string;
+  email?: boolean;
+  t: T;
+}) {
+  const [text, setText] = useState("");
+  const add = () => {
+    const extra = parse(text).filter((x, i, all) => !items.includes(x) && all.indexOf(x) === i);
+    if (extra.length) onChange([...items, ...extra]);
+    setText("");
+  };
+  return (
+    <>
+      <div className="chips" hidden={!items.length}>
+        {items.map((a) => (
+          <span key={a} className="chip">
+            {a}
+            <button type="button" aria-label={`${t("remove")} ${a}`} onClick={() => onChange(items.filter((x) => x !== a))}>×</button>
+          </span>
+        ))}
+      </div>
+      <div className="row">
+        <input
+          className="grow-input"
+          type={email ? "email" : "text"}
+          data-noexpand={email || undefined}
+          value={text}
+          placeholder={placeholder}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <button type="button" onClick={add} disabled={!parse(text).length}>{t("add")}</button>
+      </div>
+    </>
+  );
+}
+
 export function SettingsView({ initial, onSaved, onImported, t }: { initial: Settings; onSaved: (s: Settings) => void; onImported: () => void; t: T }) {
   const [s, setS] = useState<Settings>(() => ({ ...initial, lang: resolveLang(initial.lang) }));
   const [recent, setRecent] = useState<string[]>([]);
-  const [newApp, setNewApp] = useState("");
   const [msg, setMsg] = useState<Msg | null>(null);
   const [tab, setTab] = useState<Tab>("general");
 
@@ -126,42 +171,43 @@ export function SettingsView({ initial, onSaved, onImported, t }: { initial: Set
     void api.runningApps().then(setRecent);
   }, []);
 
-  const [newEmail, setNewEmail] = useState("");
-  const addEmail = (text: string) => {
-    const add = text.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter((x) => x.includes("@") && !s.shareWith.includes(x));
-    if (add.length) setS({ ...s, shareWith: [...s.shareWith, ...add] });
-    setNewEmail("");
-  };
-
-  const addApp = (name: string) => {
-    const n = name.trim().toLowerCase();
-    if (n && !s.excludedApps.includes(n)) setS({ ...s, excludedApps: [...s.excludedApps, n] });
-    setNewApp("");
-  };
-
   // Autosave: every change is written shortly after it is made (no Save button).
-  const last = useRef(s);
+  const last = useRef(s); // what is saved
+  const latest = useRef(s); // what is on screen
+  latest.current = s;
+  async function save(next: Settings) {
+    const prev = last.current;
+    last.current = next;
+    try {
+      await api.saveSettings(next);
+      setMsg((m) => (m?.error ? null : m)); // an old error is fixed now
+      onSaved(next);
+      if (next.shareWith.join() !== prev.shareWith.join()) void api.syncNow(); // publish the new list now, not in a few minutes
+    } catch (e) {
+      setMsg({ text: errText(t, e), error: true });
+      if (String(e) === "admin_cancelled") {
+        const back = { ...next, runAsAdmin: prev.runAsAdmin }; // the box goes back, nothing to save again
+        last.current = back;
+        setS(back);
+      } else onSaved(next); // saved anyway, only the shortcut registration failed
+    }
+  }
+  const saveRef = useRef(save);
+  saveRef.current = save;
   useEffect(() => {
     if (s === last.current) return;
-    const id = setTimeout(async () => {
-      const prev = last.current;
-      last.current = s;
-      try {
-        await api.saveSettings(s);
-        setMsg((m) => (m?.error ? null : m)); // an old error is fixed now
-        onSaved(s);
-        if (s.shareWith.join() !== prev.shareWith.join()) void api.syncNow(); // publish the new list now, not in a few minutes
-      } catch (e) {
-        setMsg({ text: errText(t, e), error: true });
-        if (String(e) === "admin_cancelled") {
-          const back = { ...s, runAsAdmin: prev.runAsAdmin }; // the box goes back, nothing to save again
-          last.current = back;
-          setS(back);
-        } else onSaved(s); // saved anyway, only the shortcut registration failed
-      }
-    }, 600);
+    const id = setTimeout(() => void saveRef.current(s), 600);
     return () => clearTimeout(id);
-  }, [s]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [s]);
+  // leaving Settings within the 600 ms still saves the last change
+  useEffect(() => () => void (latest.current !== last.current && saveRef.current(latest.current)), []);
+  // settings changed on another PC (sync): show them, unless something is waiting to be saved here
+  useEffect(() => {
+    if (initial === last.current || latest.current !== last.current) return;
+    const next = { ...initial, lang: resolveLang(initial.lang) };
+    last.current = next;
+    setS(next);
+  }, [initial]);
 
   const suggestions = recent.filter((r) => !s.excludedApps.includes(r) && r !== "phrasex-app.exe");
 
@@ -223,31 +269,14 @@ export function SettingsView({ initial, onSaved, onImported, t }: { initial: Set
 
             <h2>{t("settingsShare")}</h2>
             <p className="muted">{t("shareHint")}</p>
-            <div className="chips" hidden={!s.shareWith.length}>
-              {s.shareWith.map((a) => (
-                <span key={a} className="chip">
-                  {a}
-                  <button type="button" aria-label={`${t("remove")} ${a}`} onClick={() => setS({ ...s, shareWith: s.shareWith.filter((x) => x !== a) })}>×</button>
-                </span>
-              ))}
-            </div>
-            <div className="row">
-              <input
-                className="grow-input"
-                type="email"
-                data-noexpand
-                value={newEmail}
-                placeholder={t("shareAdd")}
-                onChange={(e) => setNewEmail(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    addEmail(newEmail);
-                  }
-                }}
-              />
-              <button type="button" onClick={() => addEmail(newEmail)} disabled={!newEmail.includes("@")}>{t("add")}</button>
-            </div>
+            <ListEditor
+              items={s.shareWith}
+              onChange={(shareWith) => setS({ ...s, shareWith })}
+              parse={(text) => text.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter((x) => x.includes("@"))}
+              placeholder={t("shareAdd")}
+              email
+              t={t}
+            />
           </>
         ) : null}
         {tab === "writing" ? (
@@ -293,34 +322,18 @@ export function SettingsView({ initial, onSaved, onImported, t }: { initial: Set
           <>
             <h2>{t("excludedApps")}</h2>
             <p className="muted">{t("excludedHint")}</p>
-            <div className="chips" hidden={!s.excludedApps.length}>
-              {s.excludedApps.map((a) => (
-                <span key={a} className="chip">
-                  {a}
-                  <button type="button" aria-label={`${t("remove")} ${a}`} onClick={() => setS({ ...s, excludedApps: s.excludedApps.filter((x) => x !== a) })}>×</button>
-                </span>
-              ))}
-            </div>
-            <div className="row">
-              <input
-                className="grow-input"
-                value={newApp}
-                placeholder={t("excludedAdd")}
-                onChange={(e) => setNewApp(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    addApp(newApp);
-                  }
-                }}
-              />
-              <button type="button" onClick={() => addApp(newApp)} disabled={!newApp.trim()}>{t("add")}</button>
-            </div>
+            <ListEditor
+              items={s.excludedApps}
+              onChange={(excludedApps) => setS({ ...s, excludedApps })}
+              parse={(text) => [text.trim().toLowerCase()].filter(Boolean)}
+              placeholder={t("excludedAdd")}
+              t={t}
+            />
             {suggestions.length ? (
               <div className="chips">
                 <span className="muted">{t("recentApps")}</span>
                 {suggestions.map((a) => (
-                  <button key={a} type="button" className="chip suggestion" onClick={() => addApp(a)}>+ {a}</button>
+                  <button key={a} type="button" className="chip suggestion" onClick={() => setS({ ...s, excludedApps: [...s.excludedApps, a] })}>+ {a}</button>
                 ))}
               </div>
             ) : null}

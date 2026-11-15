@@ -6,7 +6,6 @@ license.workspace = true
 
 [dependencies]
 phrasex-engine = { path = "../engine" }
-phrasex-store = { path = "../store" }
 
 [target.'cfg(windows)'.dependencies]
 # COM interfaces (accessibility caret); same version Tauri already builds

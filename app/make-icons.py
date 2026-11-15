@@ -1,7 +1,7 @@
 """Regenerates every app icon: glossy black oval speech bubble (1.25:1, 80 % of the height), short comma tail
 pointing down-left, light grey rim, X Holding X (x-mark.png). Own drawing (user's choice "B", 2026-11-08).
-Edge to edge in the square, every size drawn on its own with supersampling. The previous logo (0.1.0 ZIP)
-is kept in logo.ico. Run from app/: python make-icons.py
+Edge to edge in the square, every size drawn on its own with supersampling.
+Run from app/: python make-icons.py
 """
 import math
 
@@ -81,7 +81,6 @@ def render(bubble, x, gloss, size):
 def main():
     parts = masters()
     out = {s: render(*parts, s) for s in (16, 20, 24, 32, 40, 48, 64, 128, 256, 512)}
-    out[512].save("app-icon.png")
     out[512].save(f"{ICONS}icon.png")  # in-app logo (toolbar, welcome)
     out[512].save(f"{ICONS}icon.icns")
     for name, s in (("32x32", 32), ("64x64", 64), ("128x128", 128), ("128x128@2x", 256)):

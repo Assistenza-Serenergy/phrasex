@@ -1,101 +1,87 @@
 # Phrase X — handoff (2026-11-15)
 
 Open-source text expander (clean-room alternative to PhraseExpress) for X Holding. MIT, no limits, IT/EN UI.
-
-## Stack and layout
-- `crates/engine` — typing buffer, triggers (word/immediate, case adapt, undo data), writing assistance (double caps, sentence caps), macros (`macros.rs`: date±offset, names, time, clipboard, input forms, phrase, counter, random, calc, cursor, key/enter/tab, wait, open). 16 tests.
-- `crates/store` — SQLite (rusqlite bundled), migrations V1–V6 (V6 = sync uids/tombstones; V5 rebuilds `snippet` without UNIQUE(trigger); foreign keys are off during migrations): folder tree, snippet (+hotkey, uses), tag, setting, clip, trash. `move_folder` loop-safe. 10 tests.
-- `crates/listener` — Windows LL keyboard/mouse hooks, focus tracking, injector. Own keystrokes tagged `dwExtraInfo = OWN_INPUT_TAG`; other tools' input (VK_PACKET) counts as typing. Real layout keys via VkKeyScanEx + **hardware scan codes** (WinUI apps ignore modifiers without them); text > 2 chars pasted via clipboard with full restore + exclusion format. `restore_focus` only acts when Phrase X holds focus.
-- `app/` — Tauri 2 + React 18 + Vite 5. `src-tauri/src/main.rs` (commands, tray, hotkeys via global-shortcut, single-instance, autostart, form/popup windows, clipboard watcher, import/export JSON+CSV, daily backups in %APPDATA%\PhraseX\backups). Frontend: `App.tsx` (tree + editor + welcome/stats), `Popup.tsx` (phrases/clipboard tabs), `Form.tsx`, `Settings.tsx`, `HotkeyInput.tsx`, `locales/it.json|en.json`, `styles.css`.
-- Brand: X Holding pure black/white, serif headings. **Logo (user's choice "B", 2026-11-08)**: own drawing in `app/make-icons.py` (run in app/): glossy black oval bubble 1.25:1 (80 % of the height), short comma tail pointing down-left, light grey rim, X Holding X from `app/x-mark.png`; edge to edge, no CSS halo. User asked for an identical copy of PhraseExpress's icon: refused (their trade dress), proportions only. Measured on the user's taskbar: same 48x48 / 32x32 box as PhraseExpress, it cannot get bigger. Previous logo (0.1.0 ZIP) kept in `app/logo.ico`. Windows needs scripts/reinstall.cmd via the app's Terminal panel if `explorer.exe` doesn't start it.
-- Roadmap with done/todo: `ROADMAP.md`.
-
-## Tree UI (done 2026-11-08)
-- Right-click menu on rows/empty area (`ContextMenu` in App.tsx), empty-area click = deselect, HTML5 drag & drop (needs `"dragDropEnabled": false` on the main window in tauri.conf.json, otherwise WebView2 swallows DnD).
-- Toolbar Importa/Esporta; shared helpers `exportLibrary`/`importPicked` in Settings.tsx. `export_data(folderId?)` exports one folder subtree (becomes top level on import) to Documents.
-- Folder order is by name (no manual reorder yet).
-- Trash: store V4 `trash` table holds an export-format JSON snapshot per deletion (`delete_entry`/`delete_folder` in main.rs); restore = `import_snapshot` into the original parent (top level if gone), hotkeys kept. UI: "Cestino" node at the bottom of the tree (TrashNode/TrashView in App.tsx, user asked for it like a folder): greyed children, click = detail with Ripristina / Elimina definitivamente, node = list + Svuota cestino; irreversible actions use the two-click ConfirmButton, never native confirm(). Items older than 30 days are purged by the store (TRASH_DAYS, no count limit). Trash has its own group selection (`trashMulti`, rows carry data-tkey; box over trash rows or Ctrl+click) with Restore / Delete for good; Del does nothing in the trash (irreversible). Import refuses PhraseExpress files (.pexdb/.pxp are encrypted, entropy 8) and binaries (`import_check` in main.rs); PhraseExpress Free exports only Email attachment / Text file: the Text-file format is still to be seen.
-
-## Shared triggers / hotkeys, expansion in our window (2026-11-08)
-- Several phrases may share an abbreviation or a shortcut: the engine returns all ids (`Expansion.ids`, `suffix`), `offer_choice` stores a `Choice` and opens the popup window in mode `choose` at the text caret (`caret_pos`, mouse fallback); `choice_pick` inserts or cancels. Editor shows "also used by".
-- Expansion works in the main window too: the listener remembers it as an insertion target (`set_main_window`); fields with `data-noexpand` (abbreviation, shortcut, search) report via `set_no_expand`. A shortcut field turns global hotkeys off while focused (`set_recording_hotkey`).
-- Run as administrator (Settings toggle, user chose it): Task Scheduler task "Phrase X" (HighestAvailable, no trigger, Parallel, no battery/time limits) created/deleted via elevated schtasks (one UAC prompt). Every normal start runs the task and exits; DB flag `elevated_launch` (show/min) marks the elevated start so it never loops. Autostart stays on the Run key.
-- Tree group selection: box-select on the empty tree area or Ctrl+click → `multi` state; group panel (move to folder / delete), group drag, Esc clears. `topLevel()` drops items inside a selected folder. Delete has no confirm popup (user hates native confirm): items go to the trash at once, status bar shows "{n} nel cestino · Annulla" (restores the newest n trash ids). Del/Canc key (window listener, ignored in inputs) deletes the group or the selected row; a single Ctrl+clicked row counts as a group.
-
-## Cloud sync "Accedi con Google" (2026-11-09)
-- Store V6: `uid` (random hex, same on every PC) on folder/snippet, `updated_at` UTC text with ms (`NOW` in store), `tombstone` table filled by AFTER DELETE triggers (cascades included). Seeded examples get `sync::EPOCH` stamps = "pristine": on a PC's first sync, if the cloud has a library, untouched examples are dropped.
-- `crates/store/src/sync.rs`: `Library` doc (uids instead of ids, tags by name), `merge` (newest per uid wins, tombstone newer than every version deletes, output sorted by uid), `sync_snapshot`, `apply_sync` (local := doc; missing/looping parents → top level; usage counts stay local).
-- `app/src-tauri/src/cloud.rs`: OAuth loopback+PKCE (scopes openid email drive.appdata), refresh token in Credential Manager via `keyring` ("Phrase X"/"google-refresh-token"), Drive file `phrasex-library.json` in appDataFolder (ureq + native-tls/schannel), `plan()` decides upload/apply.
-- main.rs: `sync_loop` thread (at start, ≤1 min after a change via `SYNC_DIRTY` set in `reload`, every 5 min), commands sync_status/login/logout/now, events `sync-status` and `library-changed`. Apply happens under the store lock, `reload` then runs on the main thread (hotkey registration needs it: never call reload off-main while holding the store lock).
-- OAuth client: `app/src-tauri/google-oauth.json` (Google's "Download JSON" for a Desktop client) read by build.rs into `PHRASEX_GOOGLE_CLIENT_ID/SECRET`; missing = "non configurato". Setup guide: GOOGLE-SETUP.md.
-- Account switch: setting `sync_account` = account whose library is local (kept on sign-out). Signing in with another account → backup `backups\phrasex-cambio-account-<date>.db`, then that account's cloud library replaces the local one (`plan(adopt_cloud)`); an empty cloud gets the local library.
-- Google Cloud project `phrase-x` (account spagnuolomarco01@gmail.com): External, **In production**, non-sensitive scopes only (no user cap, no verification; users may see "app not verified"). Branding: home https://assistenza-serenergy.github.io/phrasex/, privacy …/privacy.html, authorized domain assistenza-serenergy.github.io.
-- Known limits: no conditional upload (two PCs in the same second can lose one round, re-sent next round); tombstones never pruned; settings are not synced.
-
-## GitHub (2026-11-09)
-- Public repo https://github.com/Assistenza-Serenergy/phrasex (gh logged in as Assistenza-Serenergy), branch main, GitHub Pages from /docs (website + privacy). After each change: commit and `git push`. Binaries, Installer/, google-oauth.json are gitignored; publish installers as GitHub Releases only if the user asks.
-
-## Build (Git Bash)
-- PATH="$HOME/.cargo/bin:/c/Program Files/nodejs:/c/Windows/System32:/c/Windows" (Git's /usr/bin/link shadows MSVC link.exe).
-- Tests: `cargo test --workspace`. Typecheck: `node node_modules/typescript/bin/tsc --noEmit` in app/.
-- Build: in app/ `node node_modules/@tauri-apps/cli/tauri.js build --no-bundle` (exe: target\release\phrasex-app.exe); kill phrasex-app.exe first (exe locked). Installer (`build` without flag) only at the end, per user.
-- After icon changes: `touch app/src-tauri/build.rs app/src-tauri/src/main.rs`.
-- Processes started by Claude are MSIX-sandboxed (AppData/registry virtualized): anything that must be real goes through `explorer.exe <path>`.
+Public repo https://github.com/Assistenza-Serenergy/phrasex (gh logged in as Assistenza-Serenergy), branch main,
+GitHub Pages from /docs (website + privacy). Current version 0.2.0, published as a GitHub Release.
 
 ## User rules
-- Italian, short answers (≤10 lines), first line = concrete action, no recap fluff.
-- Keep going through the roadmap without asking between modules.
-- **No GUI tests / computer use on the user's PC** unless they ask again; verify with tests + typecheck + build only.
-- Clean-room: behaviour like PhraseExpress, never its code/assets/texts/trade dress. UAC secure desktop can't be typed into; no elevation tricks.
+- Italian, short answers (≤10 lines), first line = concrete action, plain words, no AI slop in UI texts.
+- After each group of changes: commit + push on main, then build + reinstall — unless the user says to hold commits.
+- **No GUI tests / computer use on the user's PC** unless they ask; verify with tests, typecheck, build, and the
+  screenshot mode below (fake backend in the browser pane).
+- Ask before anything outward-facing (GitHub Release, website wording about data, privacy page).
+- Clean-room: behaviour like PhraseExpress, never its code/assets/texts/trade dress. No elevation tricks
+  (the UAC secure desktop can't be typed into).
+- Irreversible actions in the UI: two-click ConfirmButton, never native confirm(). Deletes go to the trash with Undo.
 
-## Local install loop (2026-11-08)
-- User runs the INSTALLED copy (%LOCALAPPDATA%\Phrase X). After `tauri build`, reinstall with `explorer.exe scripts\reinstall.vbs` (hidden window; runs reinstall.cmd: writes %APPDATA%\PhraseX\quit-request, which the app polls in watch_clipboard and quits on, because taskkill can't stop it when it runs as administrator; waits up to 20 s, silent NSIS /S, refreshes icon cache, restarts). Must go through explorer.exe to escape Claude's MSIX sandbox.
-- `python scripts/icon-preview.py` renders the icon in every placement (titlebar, in-app, welcome, taskbar, tray) — show it to the user before changing the logo.
-- Installer/ (ZIP for other people): do NOT refresh unless the user asks.
+## Build, install, release (Git Bash)
+- PATH="$HOME/.cargo/bin:/c/Program Files/nodejs:/c/Windows/System32:/c/Windows:$PATH" (Git's link.exe shadows MSVC).
+- Tests `cargo test --workspace`; typecheck `node node_modules/typescript/bin/tsc --noEmit` in app/.
+- Build ONLY with `sh scripts/build.sh`: sets the updater signing key (`%USERPROFILE%/.tauri/phrasex-updater.key`,
+  no password, outside the repo; the user must keep a backup) and writes the NSIS installer + .sig.
+- Reinstall the user's copy (%LOCALAPPDATA%\Phrase X): `explorer.exe 'C:\Users\Marco\Desktop\PhraseX\scripts\reinstall.vbs'`
+  (absolute path; a relative one does nothing). reinstall.cmd asks the app to quit (`%APPDATA%\PhraseX\quit-request`,
+  polled in watch_clipboard: taskkill can't stop an elevated app), runs the newest *-setup.exe /S, restarts it,
+  writes scripts/reinstall.log. Processes started by Claude are MSIX-sandboxed: real AppData/registry only via explorer.exe.
+- Release: bump the version in tauri.conf.json, Cargo workspace and app/package.json, build, ask the user, then
+  `python scripts/release.py "notes"` (uploads PhraseX_<v>_x64-setup.exe + latest.json). The app checks
+  `releases/latest/download/latest.json` at start and shows "Aggiorna".
+- After icon changes: `touch app/src-tauri/build.rs app/src-tauri/src/main.rs`. Logo: `app/make-icons.py`
+  (user's choice "B": glossy black bubble with the X Holding X from app/x-mark.png); `python scripts/icon-preview.py`
+  before changing it. Installer art: `scripts/make-installer-art.py` (approved).
+- Website screenshots: `.claude/launch.json` "shots" = the UI with a fake backend (app/vite.shots.config.ts,
+  app/shots/*); headless Chrome `--screenshot` (popup through shots/frame.html: headless has a minimum width).
+- Python edit scripts: heredocs in Git Bash mangle backslashes; write the script with the Write tool instead.
+- Local only, gitignored: Installer/ and "Installa Phrase X.exe" (old 0.1.0 handout), google-oauth.json, firebase.json.
 
-## 2026-11-14
-- Folder shortcut (store V7 `folder.hotkey`, synced, kept in trash snapshots): opens the chooser with the enabled phrases of the folder + subfolders (`reload` in main.rs; one phrase = inserted directly). Folder editor = name + shortcut, no description.
-- Setting `popup_sort` ("uses" | "name"): order of the popup list (empty query) and of every chooser menu.
-- Calibri for all text (`--font` in styles.css, base 14px). Start page = logo + one line (no stats/tips: user called them AI slop).
-- Tree: drag starts only from the name button; pressing beside the name (row empty area, kbd) starts the box selection; a click there opens the row, Ctrl+click toggles it.
-- New phrases default to "subito" (immediate).
-- PhraseExpress still runs on the user's PC: it expands its own abbreviations in our fields too (not our bug).
-- Later the same day: right-click "Sposta in…" (single item or group) reopens the menu as a folder list; search also matches folder names (a matching folder is shown with its content); start page title back; no status bar (messages = toast bottom-right that fades, "In pausa" badge in the toolbar only when paused; pause also in the tray); 3rd popup order "tree" (as in the library); Tag field removed from the editor (tags still stored and searchable); "Espandi" label is now "Sostituisci".
-- Sharing (built 2026-11-15): Settings "Condividi le tue frasi" = list of emails (setting `share_with`). Whoever signs in to Phrase X with one of them gets a read-only top-level folder named after the owner (Google `name` claim, `profile` scope; old grants without it fall back to the email until the user signs in again) with the owner's whole tree. Why Firebase: drive.file can't discover files shared by others and drive.readonly needs a paid yearly audit.
-  - Firebase added to GCP project `phrase-x` (Spark, free; no Analytics): Auth provider Google on; Firestore `(default)` in eur3; web app "Phrase X desktop" only for the API key → `app/src-tauri/firebase.json` `{ "apiKey": … }` (gitignored, read by build.rs into PHRASEX_FIREBASE_API_KEY; project id comes from google-oauth.json `installed.project_id`).
-  - Firestore rules: `shares/{owner}`: read if auth.uid == owner or (email_verified and auth email in resource.data.readers); write only owner.
-  - cloud.rs `Sharing`: signInWithIdp with the Google id_token from our refresh token (no extra sign-in), `publish` = PATCH shares/{firebaseUid} {ownerName, ownerEmail, readers[], library: sync Library JSON without tombstones} (empty list = DELETE), `incoming` = runQuery readers ARRAY_CONTAINS my email. 1 MB doc cap (ponytail note).
-  - main.rs `share_round` runs after every successful sync round; fingerprints in settings `share_published` / `share_received` skip unchanged uploads/rewrites; errors go to `share_error` (shown in Settings) and the debug log.
-  - Toolbar (right): "Accedi con Google" when signed out; when signed in, the Google name (`sync_name`, from the id_token `name` claim at login or from Sharing.connect) opens a small menu: Impostazioni / Esci. After the browser sign-in the loopback page tries window.close() and the main window is brought to the front (topmost for a moment). Search box is 320px max; under 1100px the icon buttons show only their icon. Verified 2026-11-15: doc shares/{uid} published with readers [assistenza@serenergy.it], ownerName "Marco Spagnuolo"; the recipient side is not tested yet.
-  - Sign-in tab: browsers refuse window.close() on a tab they didn't open by script, so after the redirect `sync_login` polls the focused window for the title `cloud::LOGIN_DONE_TITLE` and sends Ctrl+W (`listener::close_tab_titled`), then `force_foreground` on the main window. close_tab_titled waits (≤1.5 s) for the tab to go before returning: switching the focus right after SendInput sent the Ctrl+W to Phrase X instead of Chrome. Works (user, 2026-11-15).
-  - Manual order (store V9 `snippet.position`, synced and copied into shares): drag a phrase onto the upper/lower half of another phrase of the same folder (drop line); moving a phrase to another folder resets its position; "Ordina A-Z" (folder editor button and folder/empty-area context menu) sets the folder's positions back to NULL = alphabetical.
-  - Phrase X runs elevated, so computer use can't click in it (UIPI); settings can be changed from the user's Terminal panel with python + sqlite3 on %APPDATA%\PhraseX\phrasex.db (the app reads them on the next sync round).
-  - Store V8: `shared` column (owner uid) on folder/snippet; tombstone triggers skip shared rows; sync_snapshot/apply_sync ignore them; `set_shared` replaces all shared rows (uids `s:{owner}[:{uid}]`, no hotkeys/tags). Backend guard `own_only` refuses edits of shared items and putting own items inside shared folders (the next refresh would delete them). UI: fieldset disabled + "Condivisa con te: sola lettura", no drag/menu on shared rows. Export skips shared. Sign-out clears shared copies.
+## Code map
+- `crates/engine` — typing buffer, triggers (case adapt, undo data; `reload` in main.rs forces every phrase to
+  immediate, the user's wish, so the word-end mode is unused by the app), writing assistance
+  (double caps; `capital_next` for sentence capitals), macros (`macros.rs`).
+- `crates/listener` — Windows LL keyboard/mouse hooks, focus tracking, injector, clipboard. Own keystrokes tagged
+  `OWN_INPUT_TAG`; real layout keys via VkKeyScanEx + hardware scan codes (WinUI apps need them); text > 2 chars pasted
+  via the clipboard and restored. Sentence capital: the hook swallows the lowercase key and types the capital
+  (`CAPITAL_NEXT`, set by run_engine) — erasing and retyping raced with fast typing.
+- `crates/store` — SQLite, migrations V1–V13 (foreign keys off while migrating). V6 sync uids/tombstones, V7 folder
+  hotkey, V8 shared rows, V9 manual order, V10 folder colour, V11 clipboard images, V12 drops tags, V13 phrase colour.
+  `sync.rs`: sync document (`Library` incl. `settings`), `merge` (newest per uid; tombstones), `apply_sync`, `set_shared`.
+- `app/src-tauri/src` — `main.rs` (commands, tray, global shortcuts, windows, sync loop, sharing round, import/export,
+  trash, updater), `cloud.rs` (Google OAuth + Drive + Firebase sharing), `clipimg.rs` (DIB <-> PNG).
+- `app/src` — `App.tsx` (toolbar, tree, editors, trash, shortcuts, autosave), `Settings.tsx` (side tabs),
+  `Popup.tsx` (search / clipboard / chooser), `Form.tsx`, `icons.tsx`, `theme.ts`, `locales/*.json`, `styles.css`.
 
-## Done 2026-11-15 (approved list 1-28, except 13-22 "not now")
-- Texts: hints moved to tooltips (`title`), short headings, toasts ("Esportato", path in the tooltip), one-line errors.
-- Autosave everywhere (phrase editor, folder editor, Settings): 600 ms after the last change, saves chained in a ref; the draft is never overwritten by the saved copy (would eat spaces while typing). No Save button, no Ctrl+S.
-- Settings in side tabs (Generale, Account e condivisione, Correzioni, Appunti, Programmi esclusi, Dati), user said yes.
-- Icons: `app/src/icons.tsx` (16 px, 1.3 stroke, round ends), shared by tree, toolbar and popup. Quiet abbreviation chip. Popup/chooser/form in the same look. Light theme checked (contrast >= 4.5 text, 3:1 field edges).
-- Shortcuts: Ctrl+N, Ctrl+Shift+N, Ctrl+F, F2, Del, arrows/Enter in the tree, Ctrl+C / Ctrl+V (backend `paste_items`: copies keep abbreviations, drop shortcuts; also in the context menu).
-- Folder colour: store V10 `folder.color`, synced, kept in shares/trash/exports; palette in the folder editor.
-- Clipboard images: store V11 `clip.image` (PNG, max 20 images, text column holds a dedup key), `clipimg.rs` DIB<->PNG, listener `copied_image` / `inject_image`.
-- Auto-update (Tauri updater): checks GitHub `releases/latest/download/latest.json` at start, toolbar button "Aggiorna". Signing key `%USERPROFILE%/.tauri/phrasex-updater.key` (no password, outside the repo: the user must back it up). Build ONLY with `sh scripts/build.sh` (sets the key env). Publish with `python scripts/release.py "notes"` (gh release v<version> + latest.json): outward-facing, ask the user first. Version now 0.2.0 (tauri.conf.json, Cargo workspace, package.json); bump all three for each release.
-- Settings sync: `Library.settings` (SYNCED_SETTINGS, newest `settings_updated_at` wins; autostart/admin stay local; never sent to share readers).
-- Installer art: `scripts/make-installer-art.py` -> `app/src-tauri/installer/` (icon, header, sidebar), approved by the user.
-- Website: real screenshots in `docs/img`, taken from the UI with a fake backend: `.claude/launch.json` "shots" (vite.shots.config.ts + app/shots/*), then headless Chrome (`--screenshot`; popup via shots/frame.html because headless has a minimum width).
-- Cleanup: tags removed (store V12 drops the tables; SyncSnippet.tags kept empty for old versions), new phrases and CSV imports are always "subito" (old word-end phrases keep working), status-bar CSS and the debug log (`diag`) removed.
-- Reinstall: `explorer.exe 'C:/Users/Marco/Desktop/PhraseX/scripts/reinstall.vbs'` with an absolute path (a relative one silently does nothing). reinstall.cmd picks the newest *-setup.exe.
-- Python edit scripts in Git Bash: backslashes inside heredocs get mangled; write the script to the scratchpad with the Write tool instead.
-- Privacy page: mentions settings on Drive; it does NOT mention Firebase sharing yet (ask the user).
+## Behaviour worth knowing
+- Autosave everywhere (600 ms after the last change, saves chained); the draft is never overwritten by the saved
+  copy (it would eat spaces while typing). No Save button.
+- Tree: drag only from the name; beside the name = box selection; Ctrl+click toggles; Del, F2, Ctrl+N,
+  Ctrl+Shift+N, Ctrl+F, Ctrl+C/V (`paste_items`: keeps abbreviations, drops shortcuts), arrows/Enter.
+  Manual order by dragging onto another phrase of the same folder; "Ordina A-Z" resets it.
+- Several phrases may share an abbreviation or shortcut: a chooser opens at the caret. A folder shortcut opens the
+  chooser with every enabled phrase of the folder and its subfolders.
+- Colours: folders ("" = yellow), phrases ("" grey, "folder" = same as its folder, or hex);
+  "Applica a tutto il contenuto della cartella" sets subfolders to the colour and phrases to "folder".
+- Expansion also works in our main window except in fields with `data-noexpand`.
+- Run as administrator: Task Scheduler task "Phrase X" (one UAC prompt to create/delete); normal starts run the task.
+  Phrase X then runs elevated, so computer use can't click in it (UIPI).
+- Trash: JSON snapshot per deletion, restore into the original parent, purged after 30 days.
+- Clipboard history: text and images (PNG, max 20 images of 200 items); password-manager content skipped.
+- Theme: system / light / dark (`data-theme` on <html> + window setTheme).
 
-## Later on 2026-11-15 (user feedback)
-- Folder editor: Delete folder button, white + any colour (native `<input type="color">` = Windows dialog), shortcut label says it works for every phrase of the folder and subfolders; "Applica a tutto il contenuto" (`apply_folder_color`: subfolders take the colour, phrases get "folder").
-- Phrase colour: store V13 `snippet.color` ("" grey, "folder" = same as its folder, or hex), synced/shared/exported; "Come la cartella" checkbox in the editor; tree icon via `--phrase`.
-- Theme setting (system/light/dark, synced): `data-theme` on <html> + window `setTheme` (capability core:window:allow-set-theme), `app/src/theme.ts`.
-- Sentence capital: the keyboard hook swallows the key and types the capital (`CAPITAL_NEXT`, set by run_engine from `Engine::capital_next`). Erasing + retyping raced with fast typing ("cCiao").
-- Phrase context menu says "Nuova frase".
+## Cloud sync, sharing
+- "Accedi con Google": OAuth loopback + PKCE (openid email profile drive.appdata), refresh token in Credential
+  Manager, Drive file `phrasex-library.json` in appDataFolder. Sync at start, ≤1 min after a change, every 5 min.
+  Settings in SYNCED_SETTINGS travel too (newest `settings_updated_at`); autostart/admin stay local.
+  Reload with hotkey registration runs on the main thread: never call reload off-main while holding the store lock.
+- Account switch: backup `backups\phrasex-cambio-account-<date>.db`, then that account's cloud library replaces the local one.
+- Google Cloud project `phrase-x` (spagnuolomarco01@gmail.com): External, in production, non-sensitive scopes.
+- Sharing via Firebase (same project, Spark): Settings email list `share_with`; readers get a read-only top-level
+  folder named after the owner. Firestore `shares/{uid}` {ownerName, ownerEmail, readers, library} (1 MB cap);
+  rules: owner writes, verified reader emails read. Settings are never sent to readers. Recipient side not tested yet.
+- Settings are stamped (`touch_settings`) only when a synced value really changes and never on the first start
+  (a new PC would push its defaults everywhere, and an empty share list deletes the share).
+- Known limits: no conditional upload (same-second edits on two PCs resend next round); tombstones never pruned.
+- Privacy page mentions settings on Drive but not Firebase sharing yet (ask the user).
 
-## Still open
-- 23: release v0.2.0 published 2026-11-15 (user said yes): https://github.com/Assistenza-Serenergy/phrasex/releases/tag/v0.2.0. Colleagues install 0.2.0 by hand once; later versions update themselves (bump the version, build, ask, release).
-- Not now / no: 13 (PhraseExpress import), 14, 15, 16, 18, 19, 21, 22.
+## Not now / no
+PhraseExpress import (the user will move phrases by hand), rich text, encryption, network-folder library,
+uiAccess build, macOS/Linux.

@@ -11,3 +11,6 @@ __pycache__/
 /Installer/
 /scripts/reinstall.log
 /app/src-tauri/phrasex-debug.log
+
+# generated previews (scripts/*-preview.py)
+/scripts/*.png

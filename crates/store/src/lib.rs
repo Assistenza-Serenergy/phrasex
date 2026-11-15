@@ -399,6 +399,14 @@ impl Store {
             .map(drop)
     }
 
+    /// One history item: (text, PNG image).
+    pub fn clip(&self, id: i64) -> Result<Option<(String, Option<Vec<u8>>)>> {
+        self.db
+            .query_row("SELECT text, image FROM clip WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map(Some)
+            .or_else(|e| if e == Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })
+    }
+
     /// (id, text, PNG image), most recent first. Image items have a dedup key as text.
     pub fn clips(&self) -> Result<Vec<(i64, String, Option<Vec<u8>>)>> {
         let mut st = self.db.prepare("SELECT id, text, image FROM clip ORDER BY id DESC")?;
@@ -440,17 +448,21 @@ impl Store {
 
     /// Removes an item from the trash and returns (original parent if it still exists, payload).
     pub fn take_trash(&self, id: i64) -> Result<Option<(Option<i64>, String)>> {
-        let row: Option<(Option<i64>, String)> = self
-            .db
+        let row = self.trash_entry(id)?;
+        self.db.execute("DELETE FROM trash WHERE id = ?1", [id])?;
+        Ok(row)
+    }
+
+    /// A trashed item without removing it: (original parent if it still exists, export-format JSON).
+    pub fn trash_entry(&self, id: i64) -> Result<Option<(Option<i64>, String)>> {
+        self.db
             .query_row(
                 "SELECT (SELECT f.id FROM folder f WHERE f.id = t.parent_id), payload FROM trash t WHERE t.id = ?1",
                 [id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .map(Some)
-            .or_else(|e| if e == Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })?;
-        self.db.execute("DELETE FROM trash WHERE id = ?1", [id])?;
-        Ok(row)
+            .or_else(|e| if e == Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })
     }
 
     pub fn clear_trash(&self) -> Result<()> {

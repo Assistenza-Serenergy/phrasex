@@ -12,7 +12,6 @@ type Sel = { kind: "folder" | "entry"; id: number } | null;
 type Item = NonNullable<Sel>;
 type Band = { x0: number; y0: number; x1: number; y1: number };
 const keyOf = (i: Item) => (i.kind === "folder" ? "f" : "e") + i.id;
-type Draft = Entry;
 type Tree = { folders: Map<number | null, Folder[]>; entries: Map<number | null, Entry[]> };
 type FolderOption = { id: number; label: string };
 type TrashSel = number | "all" | null; // a trashed item, the trash node itself, or nothing
@@ -23,7 +22,9 @@ type RowAttrs = (item: Sel, dropFolder?: number | null) => HTMLAttributes<HTMLDi
 const DRAG_TYPE = "application/x-phrasex";
 /** Folder colours ("" = default yellow); mid tones that read on both themes. */
 const PALETTE = ["#d64545", "#e8833a", "#3fa45b", "#2f7de1", "#8a5cd6", "#d14f9b", "#8a8a8a", "#ffffff"];
-const tint = (color: string) => (color ? ({ "--folder": color } as CSSProperties) : undefined);
+/** A stored colour if it is a real "#rrggbb" (synced or shared data could carry anything), else "". */
+const hex = (c: string) => (/^#[0-9a-f]{6}$/i.test(c) ? c : "");
+const tint = (color: string) => (hex(color) ? ({ "--folder": hex(color) } as CSSProperties) : undefined);
 
 /** Swatches (special ones first: [value, css colour, label]), the palette, then any colour via the Windows dialog. */
 function ColorPicker({ value, special, onChange, t }: { value: string; special: [string, string, string][]; onChange: (c: string) => void; t: T }) {
@@ -36,16 +37,15 @@ function ColorPicker({ value, special, onChange, t }: { value: string; special: 
     <div className="swatches" role="radiogroup">
       {special.map(([c, bg, label]) => swatch(c, bg, label))}
       {PALETTE.map((c) => swatch(c, c, c))}
-      <label className={custom ? "swatch custom on" : "swatch custom"} title={t("folderColorCustom")} style={custom ? { background: value } : undefined}>
-        <input type="color" aria-label={t("folderColorCustom")} value={custom ? value : "#e0a526"} onChange={(e) => onChange(e.target.value)} />
+      <label className={custom ? "swatch custom on" : "swatch custom"} title={t("folderColorCustom")} style={custom && hex(value) ? { background: value } : undefined}>
+        <input type="color" aria-label={t("folderColorCustom")} value={hex(value) || "#e0a526"} onChange={(e) => onChange(e.target.value)} />
       </label>
     </div>
   );
 }
 
-const toDraft = (e: Entry): Draft => ({ ...e });
-const fromDraft = (d: Draft): Entry => d;
-const sameDraft = (a: Draft, b: Draft) => JSON.stringify(a) === JSON.stringify(b);
+/** Same edits? Usage count and the shared flag are not edits (expanding a phrase must not make it "changed"). */
+const sameEdit = (a: Entry, b: Entry) => JSON.stringify({ ...a, uses: 0, shared: false }) === JSON.stringify({ ...b, uses: 0, shared: false });
 
 function push<K, V>(map: Map<K, V[]>, key: K, value: V) {
   const list = map.get(key);
@@ -60,7 +60,10 @@ export default function App() {
   const [view, setView] = useState<"library" | "settings">("library");
   const [lib, setLib] = useState<Library | null>(null);
   const [sel, setSel] = useState<Sel>(null);
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const [draft, setDraft] = useState<Entry | null>(null);
+  // What the editors started from (or last saved): "changed" means changed here, not by a sync from another PC.
+  const [base, setBase] = useState<Entry | null>(null);
+  const [folderBase, setFolderBase] = useState({ name: "", hotkey: "" });
   const [folderName, setFolderName] = useState("");
   const [folderHotkey, setFolderHotkey] = useState("");
   const [query, setQuery] = useState("");
@@ -135,7 +138,7 @@ export default function App() {
     const unSettings = listen("open-settings", () => setView("settings"));
     // Cloud sync brought changes from another PC.
     const unSynced = listen("library-changed", () => {
-      void api.library().then(setLib).catch(() => {});
+      void api.library().then((l) => onSynced.current(l)).catch(() => {});
       void api.settings().then(setSettings).catch(() => {}); // settings travel with the library
     });
     // A clipboard item turned into a phrase from the popup: show it in the editor.
@@ -143,9 +146,7 @@ export default function App() {
       const l = await api.library();
       setLib(l);
       setView("library");
-      setSel({ kind: "entry", id: ev.payload });
-      const e = l.entries.find((x) => x.id === ev.payload);
-      setDraft(e ? toDraft(e) : null);
+      applySelection({ kind: "entry", id: ev.payload }, l);
     });
     return () => {
       void unPaused.then((f) => f());
@@ -190,9 +191,9 @@ export default function App() {
 
   const selectedEntry = sel?.kind === "entry" ? lib?.entries.find((e) => e.id === sel.id) : undefined;
   const selectedFolder = sel?.kind === "folder" ? lib?.folders.find((f) => f.id === sel.id) : undefined;
-  const dirty = !!draft && !!selectedEntry && !sameDraft(draft, toDraft(selectedEntry));
-  const folderRenamed = !!selectedFolder && folderName.trim() !== "" && folderName.trim() !== selectedFolder.name;
-  const folderDirty = folderRenamed || (!!selectedFolder && folderHotkey !== selectedFolder.hotkey);
+  const dirty = !!draft && !!base && !sameEdit(draft, base);
+  const folderRenamed = !!selectedFolder && folderName.trim() !== "" && folderName !== folderBase.name;
+  const folderDirty = folderRenamed || (!!selectedFolder && folderHotkey !== folderBase.hotkey);
   // libraries shared with this user are read-only: nothing new goes inside them
   const sharedFolders = useMemo(() => new Set((lib?.folders ?? []).filter((f) => f.shared).map((f) => f.id)), [lib]);
   const isShared = (i: Item) => (i.kind === "folder" ? sharedFolders.has(i.id) : !!lib?.entries.find((e) => e.id === i.id)?.shared);
@@ -204,10 +205,19 @@ export default function App() {
     setSel(next);
     const e = next?.kind === "entry" ? l?.entries.find((x) => x.id === next.id) : undefined;
     const f = next?.kind === "folder" ? l?.folders.find((x) => x.id === next.id) : undefined;
-    setDraft(e ? toDraft(e) : null);
+    setDraft(e ? { ...e } : null);
+    setBase(e ?? null);
     setFolderName(f?.name ?? "");
     setFolderHotkey(f?.hotkey ?? "");
+    setFolderBase({ name: f?.name ?? "", hotkey: f?.hotkey ?? "" });
   }
+
+  // A sync brought changes: an editor with nothing unsaved shows them; unsaved edits stay and win.
+  const onSynced = useRef((_: Library) => {});
+  onSynced.current = (l) => {
+    setLib(l);
+    if (!dirty && !folderDirty) applySelection(sel, l);
+  };
 
   function fail(e: unknown): false {
     setMsg({ text: errText(t, e), error: true });
@@ -220,17 +230,18 @@ export default function App() {
     try {
       if (dirty && draft) {
         try {
-          await api.saveEntry(fromDraft(draft));
+          await api.saveEntry(draft);
         } catch (e) {
           if (!String(e).startsWith("hotkey_unavailable")) throw e;
           if (draft.hotkey !== selectedEntry?.hotkey) fail(e); // saved, only the shortcut is taken
         }
-        l = await refresh(); // the draft stays as typed: autosave must not touch what is being written
+        setBase(draft); // the draft itself stays as typed: autosave must not touch what is being written
+        l = await refresh();
       }
       if (folderDirty && selectedFolder) {
         if (folderRenamed) await api.renameFolder(selectedFolder.id, folderName);
         let warning: unknown = null;
-        if (folderHotkey !== selectedFolder.hotkey) {
+        if (folderHotkey !== folderBase.hotkey) {
           try {
             await api.setFolderHotkey(selectedFolder.id, folderHotkey);
           } catch (e) {
@@ -238,6 +249,7 @@ export default function App() {
             warning = e; // saved, only the shortcut is taken
           }
         }
+        setFolderBase({ name: folderName, hotkey: folderHotkey });
         l = await refresh();
         if (warning) fail(warning);
       }
@@ -421,6 +433,7 @@ export default function App() {
   // App shortcuts. On window: after a box selection the focus is on no row, so the app's own onKeyDown wouldn't see them.
   const onKey = useRef((_: KeyboardEvent) => {});
   onKey.current = (e) => {
+    if (e.defaultPrevented) return; // e.g. a shortcut field recording Ctrl+Shift+N
     const el = e.target as HTMLElement | null;
     const ctrl = e.ctrlKey || e.metaKey;
     const k = e.key.toLowerCase();
@@ -749,10 +762,10 @@ export default function App() {
   /** CSS colour of a folder's icon ("" stored = default yellow). */
   function folderColor(id: number | null) {
     const f = id === null ? undefined : lib?.folders.find((x) => x.id === id);
-    return f?.color || "var(--folder)";
+    return hex(f?.color ?? "") || "var(--folder)";
   }
   /** Phrase icon colour: its own, its folder's ("folder"), or none (default grey). */
-  const phraseColor = (e: Entry) => (e.color === "folder" ? (e.folderId === null ? "" : folderColor(e.folderId)) : e.color);
+  const phraseColor = (e: Entry) => (e.color === "folder" ? (e.folderId === null ? "" : folderColor(e.folderId)) : hex(e.color));
   const treeProps = { tree, collapsed, isSel, onSelect: select, onToggle: toggleFolder, row: rowAttrs, dropKey, phraseColor, t };
   const group = topLevel(multi);
   const groupTarget = moveTarget === "" ? null : Number(moveTarget);
@@ -1233,8 +1246,8 @@ function EntryRow({ entry, depth, selected, onSelect, attrs, drop, color, t }: E
 }
 
 type EditorProps = {
-  draft: Draft;
-  setDraft: Dispatch<SetStateAction<Draft | null>>;
+  draft: Entry;
+  setDraft: Dispatch<SetStateAction<Entry | null>>;
   folderOptions: FolderOption[];
   folderColor: string; // css colour of the phrase's folder icon
   nameRef: RefObject<HTMLInputElement>;
@@ -1276,7 +1289,7 @@ function Editor({ draft, setDraft, folderOptions, folderColor, readOnly, nameRef
   };
   const sameTrigger = sharing("trigger");
   const sameHotkey = sharing("hotkey");
-  const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => d && { ...d, [key]: value });
+  const set = <K extends keyof Entry>(key: K, value: Entry[K]) => setDraft((d) => d && { ...d, [key]: value });
 
   function insert(token: string) {
     const ta = bodyRef.current;
@@ -1343,26 +1356,6 @@ function Editor({ draft, setDraft, folderOptions, folderColor, readOnly, nameRef
           {sameHotkey.length ? t("sharedHotkey", { names: sameHotkey.join(", ") }) : null}
         </p>
       ) : null}
-      <div className="row">
-        <label className="field">
-          <span>{t("folder")}</span>
-          <select value={draft.folderId ?? ""} onChange={(e) => set("folderId", e.target.value ? Number(e.target.value) : null)}>
-            <option value="">{t("noFolder")}</option>
-            {folderOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-          </select>
-        </label>
-      </div>
-      <div className="field">
-        <span>{t("phraseColor")}</span>
-        <label className="check">
-          <input type="checkbox" checked={draft.color === "folder"} onChange={(e) => set("color", e.target.checked ? "folder" : "")} />
-          {t("phraseColorFolder")}
-          <span className="dot" style={{ background: folderColor }} />
-        </label>
-        {draft.color === "folder" ? null : (
-          <ColorPicker value={draft.color} special={[["", "var(--muted)", t("phraseColorDefault")]]} onChange={(c) => set("color", c)} t={t} />
-        )}
-      </div>
       <div className="row checks">
         <label className="check">
           <input type="checkbox" checked={draft.caseSensitive} onChange={(e) => set("caseSensitive", e.target.checked)} />
@@ -1374,6 +1367,26 @@ function Editor({ draft, setDraft, folderOptions, folderColor, readOnly, nameRef
         </label>
         <span className="spacer" />
         {readOnly ? <span className="muted">{t("readOnly")}</span> : null}
+      </div>
+      <div className="row top">
+        <label className="field">
+          <span>{t("folder")}</span>
+          <select value={draft.folderId ?? ""} onChange={(e) => set("folderId", e.target.value ? Number(e.target.value) : null)}>
+            <option value="">{t("noFolder")}</option>
+            {folderOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+        </label>
+        <div className="field">
+          <span>{t("phraseColor")}</span>
+          <label className="check">
+            <input type="checkbox" checked={draft.color === "folder"} onChange={(e) => set("color", e.target.checked ? "folder" : "")} />
+            {t("phraseColorFolder")}
+            <span className="dot" style={{ background: folderColor }} />
+          </label>
+          {draft.color === "folder" ? null : (
+            <ColorPicker value={draft.color} special={[["", "var(--muted)", t("phraseColorDefault")]]} onChange={(c) => set("color", c)} t={t} />
+          )}
+        </div>
       </div>
       </fieldset>
     </form>

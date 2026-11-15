@@ -170,7 +170,8 @@ unsafe fn translate(vk: u32, scan: u32) -> bool {
     if let [c] = chars[..] {
         let mut upper = c.to_uppercase();
         if let (Some(u), None) = (upper.next(), upper.next()) {
-            if c.is_lowercase() && CAPITAL_NEXT.swap(false, Relaxed) {
+            let plain = state[VK_CONTROL as usize] == 0 && state[VK_MENU as usize] == 0; // not Alt+letter shortcuts
+            if c.is_lowercase() && plain && CAPITAL_NEXT.swap(false, Relaxed) {
                 send_input(&char_stroke(u, layout));
                 send(Key::Char(u));
                 return true;

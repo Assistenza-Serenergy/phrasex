@@ -13,10 +13,13 @@ pub fn dib_to_png(dib: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     let (w, h) = (width as usize, height.unsigned_abs() as usize);
+    if w.checked_mul(h)? > 100_000_000 {
+        return None; // malformed header: never trust its sizes
+    }
     let masks = if compression == 3 && header == 40 { 12 } else { 0 };
-    let start = header + masks + colors * 4;
+    let start = header.checked_add(masks)?.checked_add(colors.checked_mul(4)?)?;
     let stride = (w * bpp).div_ceil(32) * 4;
-    let pixels = dib.get(start..start + stride * h)?;
+    let pixels = dib.get(start..start.checked_add(stride.checked_mul(h)?)?)?;
     let mut rgba = Vec::with_capacity(w * h * 4);
     for y in 0..h {
         let row = if height > 0 { h - 1 - y } else { y }; // positive height = bottom-up rows
@@ -81,5 +84,7 @@ mod tests {
         assert_eq!(&back[40..48], &[0, 0, 255, 255, 0, 255, 0, 255]);
         assert_eq!(&back[48..56], &[255, 0, 0, 255, 255, 255, 255, 255]);
         assert!(super::dib_to_png(&dib[..30]).is_none(), "short data is refused, not read past the end");
+        dib[8..12].copy_from_slice(&i32::MIN.to_le_bytes());
+        assert!(super::dib_to_png(&dib).is_none(), "absurd height is refused, no overflow");
     }
 }

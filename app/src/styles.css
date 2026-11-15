@@ -301,3 +301,4 @@ button.paused-badge { color: var(--danger); border-color: var(--danger); }
 .node .label > .icon:not(.folder-icon) { color: var(--phrase, var(--muted)); }
 .field-note { margin: -8px 0 0; font-size: 12px; }
 .dot { width: 12px; height: 12px; border-radius: 50%; box-shadow: 0 0 0 1px var(--input-border); }
+.row.top { align-items: flex-start; }

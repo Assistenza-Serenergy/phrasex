@@ -241,7 +241,7 @@ fn reload(app: &AppHandle, store: &Store) -> Res<(Vec<i64>, Vec<i64>, bool)> {
         return Ok((vec![], vec![], false)); // a shortcut field is listening: re-registered when it loses focus
     }
     let mut popup_failed = false;
-    let settings = load_settings(app, store);
+    let settings = s;
     let mut register = |hk: &str| match hk.parse::<Shortcut>() {
         Ok(sc) if gs.register(sc).is_ok() => Some(sc.id()),
         _ => {
@@ -734,6 +734,11 @@ fn save_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> 
         return Err("invalid_hotkey".into());
     }
     let store = state.store.lock().unwrap();
+    let synced = |store: &Store| -> Vec<Option<String>> {
+        phrasex_store::sync::SYNCED_SETTINGS.iter().map(|k| store.setting(k).ok().flatten()).collect()
+    };
+    let before = synced(&store);
+    let first_run = store.setting("lang").ok().flatten().unwrap_or_default().is_empty();
     store.set_setting("lang", &settings.lang).map_err(err)?;
     store.set_setting("popup_hotkey", settings.popup_hotkey.trim()).map_err(err)?;
     store.set_setting("clip_hotkey", settings.clip_hotkey.trim()).map_err(err)?;
@@ -750,7 +755,11 @@ fn save_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> 
     }
     let apps: Vec<String> = settings.excluded_apps.iter().map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect();
     store.set_setting("excluded_apps", &apps.join("\n")).map_err(err)?;
-    store.touch_settings().map_err(err)?; // goes to the user's other PCs on the next sync round
+    // a real change goes to the user's other PCs on the next sync round; the first start (defaults) never does,
+    // or a new PC would overwrite the settings everywhere
+    if !first_run && synced(&store) != before {
+        store.touch_settings().map_err(err)?;
+    }
     let auto = app.autolaunch();
     let _ = if settings.autostart { auto.enable() } else { auto.disable() };
     let was_admin = store.setting("run_as_admin").ok().flatten().as_deref() == Some("on");
@@ -1019,7 +1028,7 @@ fn import_snapshot(store: &mut Store, report: &mut ImportReport, file: ExportFil
                     if keep_hotkeys && !f.hotkey.is_empty() {
                         store.set_folder_hotkey(id, Some(&f.hotkey)).map_err(err)?;
                     }
-                    if !f.color.is_empty() {
+                    if !f.color.is_empty() && valid_color(&f.color, false) {
                         store.set_folder_color(id, Some(&f.color)).map_err(err)?;
                     }
                     ids.insert(f.id, id);
@@ -1133,9 +1142,10 @@ fn trash(state: State<AppState>) -> Res<Vec<TrashDto>> {
 fn trash_restore(app: AppHandle, state: State<AppState>, id: i64) -> Res<ImportReport> {
     let mut store = state.store.lock().unwrap();
     let mut report = ImportReport { phrases: 0, folders: 0 };
-    let Some((parent, payload)) = store.take_trash(id).map_err(err)? else { return Ok(report) };
+    let Some((parent, payload)) = store.trash_entry(id).map_err(err)? else { return Ok(report) };
     let file: ExportFile = serde_json::from_str(&payload).map_err(err)?;
     import_snapshot(&mut store, &mut report, file, parent, true)?;
+    store.take_trash(id).map_err(err)?; // only once it is back: a failed restore keeps it in the trash
     reload(&app, &store)?;
     Ok(report)
 }
@@ -1250,8 +1260,8 @@ fn clip_insert(app: AppHandle, state: State<AppState>, id: i64) {
     if let Some(w) = app.get_webview_window("popup") {
         let _ = w.hide();
     }
-    let clip = state.store.lock().unwrap().clips().ok().and_then(|c| c.into_iter().find(|c| c.0 == id));
-    if let Some((_, text, image)) = clip {
+    let clip = state.store.lock().unwrap().clip(id).ok().flatten();
+    if let Some((text, image)) = clip {
         std::thread::spawn(move || {
             let _one_at_a_time = DELIVER.lock().unwrap_or_else(|p| p.into_inner());
             phrasex_listener::restore_focus();
@@ -1281,7 +1291,10 @@ fn clip_clear(state: State<AppState>) -> Res<()> {
 #[tauri::command]
 fn clip_to_phrase(app: AppHandle, state: State<AppState>, id: i64) -> Res<i64> {
     let store = state.store.lock().unwrap();
-    let text = store.clips().map_err(err)?.into_iter().find(|c| c.0 == id && c.2.is_none()).map(|c| c.1).ok_or("not found")?;
+    let text = match store.clip(id).map_err(err)? {
+        Some((text, None)) => text,
+        _ => return Err("not found".into()), // gone, or a picture
+    };
     let name: String = text.lines().next().unwrap_or("").chars().take(40).collect();
     let new_id = store.save(&Entry::new(None, name.trim(), "", &text)).map_err(err)?;
     reload(&app, &store)?;
@@ -1698,7 +1711,7 @@ fn main() {
         }
         let _ = store.set_setting(admin::LAUNCH_FLAG, ""); // task gone: keep running normally
     }
-    let engine = Arc::new(Mutex::new(Engine::new(store.engine_snippets().expect("read snippets"))));
+    let engine = Arc::new(Mutex::new(Engine::new(vec![]))); // filled by reload() in setup
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show_main(app)))

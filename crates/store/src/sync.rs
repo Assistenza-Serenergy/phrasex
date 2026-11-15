@@ -156,32 +156,29 @@ impl Store {
             .query_map([], |r| Ok(SyncFolder { uid: r.get(0)?, parent: r.get(1)?, name: r.get(2)?, updated_at: r.get(3)?, hotkey: r.get(4)?, color: r.get(5)? }))?
             .collect::<Result<_>>()?;
         let mut st = self.db.prepare(
-            "SELECT s.id, s.uid, f.uid, s.name, s.trigger, s.body, s.mode, s.case_sensitive, s.enabled, s.hotkey, s.updated_at, s.position, s.color
+            "SELECT s.uid, f.uid, s.name, s.trigger, s.body, s.mode, s.case_sensitive, s.enabled, s.hotkey, s.updated_at, s.position, s.color
              FROM snippet s LEFT JOIN folder f ON f.id = s.folder_id WHERE s.shared IS NULL ORDER BY s.uid",
         )?;
-        let rows: Vec<(i64, SyncSnippet)> = st
+        let snippets: Vec<SyncSnippet> = st
             .query_map([], |r| {
-                Ok((
-                    r.get(0)?,
-                    SyncSnippet {
-                        uid: r.get(1)?,
-                        folder: r.get(2)?,
-                        name: r.get(3)?,
-                        trigger: r.get(4)?,
-                        body: r.get(5)?,
-                        immediate: r.get::<_, String>(6)? == "immediate",
-                        case_sensitive: r.get(7)?,
-                        enabled: r.get(8)?,
-                        hotkey: r.get(9)?,
-                        position: r.get(11)?,
-                        color: r.get(12)?,
-                        tags: vec![],
-                        updated_at: r.get(10)?,
-                    },
-                ))
+                Ok(SyncSnippet {
+                    uid: r.get(0)?,
+                    folder: r.get(1)?,
+                    name: r.get(2)?,
+                    trigger: r.get(3)?,
+                    body: r.get(4)?,
+                    immediate: r.get::<_, String>(5)? == "immediate",
+                    case_sensitive: r.get(6)?,
+                    enabled: r.get(7)?,
+                    hotkey: r.get(8)?,
+                    position: r.get(10)?,
+                    color: r.get(11)?,
+                    tags: vec![],
+                    updated_at: r.get(9)?,
+                })
             })?
             .collect::<Result<_>>()?;
-        let snippets = rows.into_iter().map(|(_, s)| s).collect();
+
         let mut st = self.db.prepare("SELECT uid, deleted_at FROM tombstone ORDER BY uid")?;
         let tombstones =
             st.query_map([], |r| Ok(Tombstone { uid: r.get(0)?, deleted_at: r.get(1)? }))?.collect::<Result<_>>()?;
