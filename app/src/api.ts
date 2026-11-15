@@ -50,6 +50,7 @@ export const api = {
   setFolderHotkey: (id: number, hotkey: string) => invoke<void>("set_folder_hotkey", { id, hotkey }),
   reorderEntries: (ids: number[]) => invoke<void>("reorder_entries", { ids }),
   sortFolder: (folderId: number | null) => invoke<void>("sort_folder", { folderId }),
+  pasteItems: (folders: number[], entries: number[], target: number | null) => invoke<{ phrases: number; folders: number }>("paste_items", { folders, entries, target }),
   moveFolder: (id: number, parentId: number | null) => invoke<void>("move_folder", { id, parentId }),
   deleteFolder: (id: number) => invoke<void>("delete_folder", { id }),
   setPaused: (paused: boolean) => invoke<void>("set_paused", { paused }),

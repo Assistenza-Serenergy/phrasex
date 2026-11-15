@@ -50,6 +50,7 @@ export default function App() {
   const [msg, setMsg] = useState<{ text: string; error: boolean; title?: string; undo?: number[] } | null>(null); // undo = trash ids to restore
   const nameRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
   const [accountMenu, setAccountMenu] = useState<{ x: number; y: number } | null>(null); // click on the name: settings / sign out
   const dragged = useRef<Item[] | null>(null); // dataTransfer can't be read during dragover
@@ -346,21 +347,73 @@ export default function App() {
     void loadTrash();
   }
 
-  // Del/Canc deletes the selection (group first), unless typing in a field. On window: after a box selection
-  // the focus is on no row, so the app's own onKeyDown wouldn't see the key.
-  const onDelete = useRef(() => {});
-  onDelete.current = () => {
-    if (view === "library" && trashSel === null) void remove(multi.length ? null : sel);
+  /** Ctrl+C in the tree: what Ctrl+V will copy (folders with their content, phrases). */
+  const copied = useRef<Item[]>([]);
+  async function paste(target = targetFolderId) {
+    const items = copied.current;
+    if (!items.length || (await saveCurrent()) === false) return;
+    try {
+      await api.pasteItems(items.filter((i) => i.kind === "folder").map((i) => i.id), items.filter((i) => i.kind === "entry").map((i) => i.id), target);
+      expand(target);
+      await refresh();
+      setMsg({ text: t("pasted"), error: false });
+    } catch (e) {
+      fail(e);
+    }
+  }
+
+  /** Arrows and Enter in the tree: rows in screen order, like Explorer. */
+  function treeKey(key: string) {
+    const rows = [...document.querySelectorAll<HTMLElement>("nav.tree [data-key]")];
+    if (!rows.length) return;
+    const cur = sel ? rows.findIndex((r) => r.dataset.key === keyOf(sel)) : -1;
+    const go = (row?: HTMLElement) => {
+      const k = row?.dataset.key;
+      if (!k) return;
+      void select({ kind: k[0] === "f" ? "folder" : "entry", id: Number(k.slice(1)) }).then(() =>
+        requestAnimationFrame(() => document.querySelector<HTMLElement>(`nav.tree [data-key="${k}"] .label`)?.focus()),
+      );
+    };
+    const folder = sel?.kind === "folder" ? sel.id : null;
+    if (key === "ArrowDown") go(rows[Math.min(rows.length - 1, cur + 1)]);
+    else if (key === "ArrowUp") go(rows[Math.max(0, cur - 1)]);
+    else if (key === "ArrowRight" && folder !== null) (collapsed.has(folder) ? toggleFolder(folder) : go(rows[cur + 1]));
+    else if (key === "ArrowLeft") {
+      if (folder !== null && !collapsed.has(folder)) toggleFolder(folder);
+      else if (sel) go(rows.find((r) => r.dataset.key === `f${parentOf(sel)}`));
+    } else if (key === "Enter") {
+      if (folder !== null) toggleFolder(folder);
+      else document.querySelector<HTMLElement>(".editor textarea")?.focus();
+    }
+  }
+
+  // App shortcuts. On window: after a box selection the focus is on no row, so the app's own onKeyDown wouldn't see them.
+  const onKey = useRef((_: KeyboardEvent) => {});
+  onKey.current = (e) => {
+    const el = e.target as HTMLElement | null;
+    const ctrl = e.ctrlKey || e.metaKey;
+    const k = e.key.toLowerCase();
+    const run = (f: () => unknown) => {
+      e.preventDefault();
+      void f();
+    };
+    if (ctrl && k === "n") return run(() => (e.shiftKey ? newFolder() : newEntry()));
+    if (ctrl && k === "f") return run(() => (setView("library"), searchRef.current?.select()));
+    if (el?.closest?.("input, textarea, select, [contenteditable=true]") || view !== "library" || trashSel !== null) return;
+    if (e.key === "Delete") return run(() => remove(multi.length ? null : sel));
+    if (e.key === "F2" && sel && !isShared(sel)) return run(() => rename(sel));
+    if (ctrl && k === "c" && (multi.length || sel)) {
+      copied.current = topLevel(multi.length ? multi : [sel!]);
+      return run(() => setMsg({ text: t("copied", { n: copied.current.length }), error: false }));
+    }
+    if (ctrl && k === "v") return run(() => paste());
+    const inTree = !el || el === document.body || !!el.closest?.("nav.tree");
+    if (inTree && !ctrl && ["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Enter"].includes(e.key)) run(() => treeKey(e.key));
   };
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement | null;
-      if (e.key !== "Delete" || el?.closest?.("input, textarea, select, [contenteditable=true]")) return;
-      e.preventDefault();
-      onDelete.current();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const h = (e: KeyboardEvent) => onKey.current(e);
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
   }, []);
 
   async function rename(target: NonNullable<Sel>) {
@@ -568,11 +621,14 @@ export default function App() {
       return dests.filter(([, id]) => canDrop(moving, id)).map(([label, id]) => [label, () => moveTo(moving, id)]);
     }
     const moveItem = mi("ctxMoveTo", () => setMenu({ ...m, move: true })); // runs after the menu closes: reopens it as the folder list
-    if (inGroup) return [moveItem, null, mi("ctxDeleteSelected", () => remove(target))];
+    const copyItem = mi("ctxCopy", () => (copied.current = moving.length ? moving : target ? [target] : []));
+    const pasteItem = (to: number | null) => (copied.current.length ? mi("ctxPaste", () => paste(to)) : null);
+    if (inGroup) return [copyItem, moveItem, null, mi("ctxDeleteSelected", () => remove(target))];
     if (!target) {
       return [
         mi("ctxNewRootFolder", () => newFolder(null)),
         mi("newEntry", () => newEntry(null)),
+        pasteItem(null),
         null,
         mi("ctxImport", () => fileRef.current?.click()),
         mi("ctxExportAll", () => exportData()),
@@ -586,6 +642,8 @@ export default function App() {
         mi("ctxNewRootFolder", () => newFolder(null)),
         null,
         mi("ctxRename", () => rename(target)),
+        copyItem,
+        pasteItem(target.id),
         moveItem,
         mi("ctxExportFolder", () => exportData(target.id)),
         mi("ctxSortAZ", () => sortFolder(target.id)),
@@ -600,6 +658,7 @@ export default function App() {
       null,
       mi("ctxRename", () => rename(target)),
       mi("ctxDuplicate", () => duplicate(target.id)),
+      copyItem,
       moveItem,
       null,
       mi("delete", () => remove(target)),
@@ -675,19 +734,21 @@ export default function App() {
           <img src={logo} alt="" width={23} height={23} />
           <span>Phrase X</span>
         </div>
-        <button className="accent" title={t("newEntry")} onClick={() => newEntry()}>{PhraseIcon}<span>{t("newEntry")}</span></button>
-        <button title={t("newFolder")} onClick={() => newFolder()}>{FolderIcon}<span>{t("newFolder")}</span></button>
+        <button className="accent" title={`${t("newEntry")} (Ctrl+N)`} onClick={() => newEntry()}>{PhraseIcon}<span>{t("newEntry")}</span></button>
+        <button title={`${t("newFolder")} (${t("kbdNewFolder")})`} onClick={() => newFolder()}>{FolderIcon}<span>{t("newFolder")}</span></button>
         <button onClick={() => remove()} disabled={!sel && !multi.length} title={t("delete")}>{TrashIcon}<span>{t("delete")}</span></button>
         <button onClick={() => fileRef.current?.click()} title={t("importTitle")}>{ImportIcon}<span>{t("importShort")}</span></button>
         <button onClick={() => exportData()} title={t("exportTitle")}>{ExportIcon}<span>{t("exportShort")}</span></button>
         <input ref={fileRef} type="file" accept={IMPORT_ACCEPT} hidden onChange={(e) => void importFile(e.currentTarget)} />
         <input
+          ref={searchRef}
           className="search"
           type="search"
           data-noexpand
           value={query}
           placeholder={t("search")}
           aria-label={t("search")}
+          title="Ctrl+F"
           onChange={(e) => setQuery(e.target.value)}
         />
         <span className="spacer" />

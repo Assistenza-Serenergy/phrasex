@@ -176,5 +176,10 @@
   "importTip": "CSV con le colonne: descrizione; abbreviazione; testo",
   "sharedTip": "Si apre un menu per scegliere la frase.",
   "folderHotkeyTip": "Apre il menu con le frasi di questa cartella.",
-  "settingsAccountTab": "Account e condivisione"
+  "settingsAccountTab": "Account e condivisione",
+  "copied": "{n} copiati",
+  "pasted": "Incollato",
+  "ctxCopy": "Copia",
+  "ctxPaste": "Incolla",
+  "kbdNewFolder": "Ctrl+Maiusc+N"
 }

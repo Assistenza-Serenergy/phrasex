@@ -998,6 +998,25 @@ fn import_snapshot(store: &mut Store, report: &mut ImportReport, file: ExportFil
     Ok(())
 }
 
+/// Ctrl+C / Ctrl+V in the tree: copies of folders (with their content) and phrases under `target`.
+/// Abbreviations are kept, shortcuts are not (a shortcut works only once).
+#[tauri::command]
+fn paste_items(app: AppHandle, state: State<AppState>, folders: Vec<i64>, entries: Vec<i64>, target: Option<i64>) -> Res<ImportReport> {
+    let mut store = state.store.lock().unwrap();
+    own_only(&store, &[], &[target])?;
+    let mut report = ImportReport { phrases: 0, folders: 0 };
+    for id in folders {
+        let (file, _, _) = folder_snapshot(&store, id)?;
+        import_snapshot(&mut store, &mut report, file, target, false)?;
+    }
+    let mut picked: Vec<Entry> = store.entries().map_err(err)?.into_iter().filter(|e| entries.contains(&e.id)).collect();
+    picked.iter_mut().for_each(|e| e.folder_id = None);
+    let file = snapshot(&store, vec![], picked)?;
+    import_snapshot(&mut store, &mut report, file, target, false)?;
+    reload(&app, &store)?;
+    Ok(report)
+}
+
 /// Imports a Phrase X JSON export, or a CSV with columns description;abbreviation;text
 /// (comma or semicolon separated, header optional). Everything lands in a new folder.
 #[tauri::command]
@@ -1632,7 +1651,7 @@ fn main() {
             recording: AtomicBool::new(false),
         })
         .invoke_handler(tauri::generate_handler![
-            library, save_entry, delete_entry, add_folder, rename_folder, set_folder_hotkey, reorder_entries, sort_folder, move_folder, delete_folder, set_paused,
+            library, save_entry, delete_entry, add_folder, rename_folder, set_folder_hotkey, reorder_entries, sort_folder, paste_items, move_folder, delete_folder, set_paused,
             settings, save_settings, running_apps, popup_insert, popup_hide, form_pending, form_submit,
             clips, clip_insert, clip_delete, clip_clear, clip_to_phrase, export_data, import_data, open_backups, install_autocorrect,
             trash, trash_restore, trash_delete, trash_clear, choice_pending, choice_pick, set_no_expand, set_recording_hotkey,

@@ -176,5 +176,10 @@
   "importTip": "CSV columns: description; abbreviation; text",
   "sharedTip": "A menu opens to pick the phrase.",
   "folderHotkeyTip": "Opens the menu with this folder's phrases.",
-  "settingsAccountTab": "Account and sharing"
+  "settingsAccountTab": "Account and sharing",
+  "copied": "{n} copied",
+  "pasted": "Pasted",
+  "ctxCopy": "Copy",
+  "ctxPaste": "Paste",
+  "kbdNewFolder": "Ctrl+Shift+N"
 }
