@@ -5,6 +5,7 @@ import { errText, resolveLang, translator, type Key, type T } from "./i18n";
 import { HotkeyInput } from "./HotkeyInput";
 import { exportLibrary, importPicked, IMPORT_ACCEPT, SettingsView } from "./Settings";
 import logo from "../src-tauri/icons/icon.png";
+import { AccountIcon, ExportIcon, FolderIcon, GearIcon, ImportIcon, PhraseIcon, TrashIcon } from "./icons";
 
 type Sel = { kind: "folder" | "entry"; id: number } | null;
 type Item = NonNullable<Sel>;
@@ -32,35 +33,6 @@ function push<K, V>(map: Map<K, V[]>, key: K, value: V) {
   if (list) list.push(value);
   else map.set(key, [value]);
 }
-
-const FolderIcon = (
-  <svg className="icon folder-icon" viewBox="0 0 16 16" aria-hidden="true">
-    <path d="M1.5 3.5h4.2l1.4 1.5h7.4v7.5h-13z" fill="currentColor" />
-  </svg>
-);
-const PhraseIcon = (
-  <svg className="icon" viewBox="0 0 16 16" aria-hidden="true">
-    <path d="M3.5 2.5h6l3 3v8h-9z M5.5 7.5h5 M5.5 10h5" fill="none" stroke="currentColor" strokeWidth="1.1" />
-  </svg>
-);
-const TrashIcon = (
-  <svg className="icon" viewBox="0 0 16 16" aria-hidden="true">
-    <path d="M2.5 4h11M6 4V2.5h4V4M3.8 4l.8 9.5h6.8l.8-9.5M6.5 6.5v5M9.5 6.5v5" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
-  </svg>
-);
-const AccountIcon = (
-  <svg className="icon" viewBox="0 0 16 16" aria-hidden="true">
-    <circle cx="8" cy="5.5" r="2.7" fill="none" stroke="currentColor" strokeWidth="1.3" />
-    <path d="M2.8 14c.6-2.8 2.7-4.3 5.2-4.3s4.6 1.5 5.2 4.3" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-  </svg>
-);
-const GearIcon = (
-  <svg className="icon" viewBox="0 0 16 16" aria-hidden="true">
-    {/* cog: thick dashed ring = teeth, ring = body */}
-    <circle cx="8" cy="8" r="5.9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeDasharray="2.3 2.33" />
-    <circle cx="8" cy="8" r="4.3" fill="none" stroke="currentColor" strokeWidth="1.9" />
-  </svg>
-);
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -705,9 +677,9 @@ export default function App() {
         </div>
         <button className="accent" title={t("newEntry")} onClick={() => newEntry()}>{PhraseIcon}<span>{t("newEntry")}</span></button>
         <button title={t("newFolder")} onClick={() => newFolder()}>{FolderIcon}<span>{t("newFolder")}</span></button>
-        <button onClick={() => remove()} disabled={!sel && !multi.length}>{t("delete")}</button>
-        <button onClick={() => fileRef.current?.click()} title={t("importTitle")}>{t("importShort")}</button>
-        <button onClick={() => exportData()} title={t("exportTitle")}>{t("exportShort")}</button>
+        <button onClick={() => remove()} disabled={!sel && !multi.length} title={t("delete")}>{TrashIcon}<span>{t("delete")}</span></button>
+        <button onClick={() => fileRef.current?.click()} title={t("importTitle")}>{ImportIcon}<span>{t("importShort")}</span></button>
+        <button onClick={() => exportData()} title={t("exportTitle")}>{ExportIcon}<span>{t("exportShort")}</span></button>
         <input ref={fileRef} type="file" accept={IMPORT_ACCEPT} hidden onChange={(e) => void importFile(e.currentTarget)} />
         <input
           className="search"

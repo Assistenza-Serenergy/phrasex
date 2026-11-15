@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { api, type Clip, type Entry, type Folder, type Lang, type Settings } from "./api";
 import { resolveLang, translator } from "./i18n";
+import { PhraseIcon } from "./icons";
 
 type Item = Entry & { folder: string };
 /** phrases/clips = search popup; choose = several phrases share what was typed, pick one. */
@@ -212,6 +213,7 @@ export function Popup() {
           ? phraseResults.map((e, i) => (
               <li key={e.id} role="option" aria-selected={i === current} className={i === current ? "active" : undefined} onMouseMove={() => i !== current && setIndex(i)} onClick={() => choose(i)}>
                 <div className="popup-row">
+                  {PhraseIcon}
                   <span className="popup-name">{e.name || t("unnamed")}</span>
                   {e.trigger ? <kbd>{e.trigger}</kbd> : null}
                 </div>

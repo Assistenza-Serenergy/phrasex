@@ -4,15 +4,16 @@
   --panel: #ffffff;
   --border: #e0e0e0;
   --text: #0a0a0a;
-  --muted: #6b6b6b;
+  --muted: #5e5e5e;
   --accent: #000000;
   --accent-text: #ffffff;
-  --selected: #ebebeb;
+  --selected: #e4e4e4;
   --hover: #f2f2f2;
   --input: #ffffff;
   --danger: #c0262d;
   --kbd: #f4f4f4;
-  --folder: #e0a526; /* yellow folders, like Windows */
+  --folder: #b8860b; /* yellow folders, like Windows (dark enough for 3:1 on white) */
+  --input-border: #8f8f8f; /* field edges need 3:1 */
   --font: Calibri, Carlito, "Segoe UI", system-ui, sans-serif;
   --serif: var(--font);
   color-scheme: light;
@@ -35,6 +36,7 @@
     --danger: #ff6b6b;
     --kbd: #1a1a1a;
     --folder: #f5c542;
+    --input-border: #6a6a6a;
     color-scheme: dark;
   }
 }
@@ -76,11 +78,11 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
 
 input, select, textarea {
-  padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--input);
+  padding: 5px 8px; border: 1px solid var(--input-border); border-radius: 6px; background: var(--input);
 }
 
 .icon { width: 16px; height: 16px; flex: none; color: var(--muted); }
-.folder-icon { color: var(--folder); }
+.folder-icon { color: var(--folder); fill: color-mix(in oklch, var(--folder) 28%, transparent); }
 
 .panes { flex: 1; display: flex; min-height: 0; }
 
@@ -236,7 +238,7 @@ select { cursor: pointer; }
 .node.trash-node { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 6px; }
 .node.trashed .name, .node.trashed .icon { color: var(--muted); }
 .node.trashed .name { font-style: italic; }
-button.danger-fill { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 600; }
+button.danger-fill { background: var(--danger); border-color: var(--danger); color: var(--accent-text); font-weight: 600; }
 .trash li .icon { flex: none; color: var(--muted); }
 .trash .link-row { border: 0; background: none; padding: 0; text-align: left; font: inherit; color: inherit; cursor: pointer; }
 .trash .link-row:hover { text-decoration: underline; }
@@ -258,3 +260,20 @@ button.paused-badge { color: var(--danger); border-color: var(--danger); }
 .settings-tabs button { justify-content: flex-start; border: 0; background: none; padding: 7px 12px; border-radius: 6px; }
 .settings-tabs button.on { background: var(--selected); font-weight: 600; }
 .settings-layout .settings { flex: 1; min-width: 0; }
+
+/* ---------- quieter tree (2026-11-15) ---------- */
+.node { min-height: 28px; }
+.node .label { padding: 4px 6px; gap: 8px; }
+.node.selected { background: var(--selected); }
+.node.selected .name { font-weight: 600; }
+.node > kbd { background: none; border: 0; padding: 0 2px; font-size: 11.5px; color: var(--muted); }
+.toolbar button .icon { color: currentColor; }
+
+/* ---------- popup, chooser and form: same look as the main window ---------- */
+.popup kbd { background: none; border: 0; padding: 0 2px; font-size: 11.5px; color: var(--muted); }
+.popup-tabs button { border: 0; background: none; }
+.popup-tabs button.on { background: var(--selected); color: var(--text); border: 0; }
+.popup-list li { padding: 6px 10px; }
+.popup-preview { padding-left: 24px; }
+.chooser-title, .form-window h1 { font: 600 15px/1.2 var(--font); }
+.form-window { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; }
