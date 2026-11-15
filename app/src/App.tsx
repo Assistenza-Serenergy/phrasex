@@ -11,7 +11,7 @@ type Sel = { kind: "folder" | "entry"; id: number } | null;
 type Item = NonNullable<Sel>;
 type Band = { x0: number; y0: number; x1: number; y1: number };
 const keyOf = (i: Item) => (i.kind === "folder" ? "f" : "e") + i.id;
-type Draft = Omit<Entry, "tags"> & { tagsText: string };
+type Draft = Entry;
 type Tree = { folders: Map<number | null, Folder[]>; entries: Map<number | null, Entry[]> };
 type FolderOption = { id: number; label: string };
 type TrashSel = number | "all" | null; // a trashed item, the trash node itself, or nothing
@@ -24,11 +24,8 @@ const DRAG_TYPE = "application/x-phrasex";
 const FOLDER_COLORS = ["", "#d64545", "#e8833a", "#3fa45b", "#2f7de1", "#8a5cd6", "#d14f9b", "#8a8a8a"];
 const tint = (color: string) => (color ? ({ "--folder": color } as CSSProperties) : undefined);
 
-const toDraft = ({ tags, ...rest }: Entry): Draft => ({ ...rest, tagsText: tags.join(", ") });
-const fromDraft = ({ tagsText, ...rest }: Draft): Entry => ({
-  ...rest,
-  tags: tagsText.split(",").map((s) => s.trim()).filter(Boolean),
-});
+const toDraft = (e: Entry): Draft => ({ ...e });
+const fromDraft = (d: Draft): Entry => d;
 const sameDraft = (a: Draft, b: Draft) => JSON.stringify(a) === JSON.stringify(b);
 
 function push<K, V>(map: Map<K, V[]>, key: K, value: V) {
@@ -302,7 +299,7 @@ export default function App() {
     try {
       const id = await api.saveEntry({
         id: 0, folderId, name: t("newEntry"), trigger: "", body: "",
-        immediate: true, caseSensitive: false, enabled: true, hotkey: "", tags: [], uses: 0, shared: false, // user: always expand right away
+        immediate: true, caseSensitive: false, enabled: true, hotkey: "", uses: 0, shared: false, // user: always expand right away
       });
       expand(folderId);
       applySelection({ kind: "entry", id }, await refresh());

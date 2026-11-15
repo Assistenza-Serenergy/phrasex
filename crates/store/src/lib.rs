@@ -1,4 +1,4 @@
-//! Data layer: folders (tree, top level = categories), snippets, tags in one SQLite file.
+//! Data layer: folders (tree, top level = categories) and snippets in one SQLite file.
 
 use phrasex_engine::{Mode, Snippet};
 use rusqlite::{params, Connection, Row};
@@ -8,7 +8,10 @@ pub use rusqlite::{Error, Result};
 pub mod sync;
 
 /// Schema migrations, applied in order; `PRAGMA user_version` = number applied.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12];
+
+/// Tags are gone (unused since the editor dropped the field).
+const V12: &str = "DROP TABLE snippet_tag; DROP TABLE tag;";
 
 /// Images in the clipboard history (PNG; `text` then holds a dedup key, see `add_image_clip`).
 const V11: &str = "ALTER TABLE clip ADD COLUMN image BLOB;";
@@ -181,7 +184,7 @@ impl Entry {
             name: name.into(),
             trigger: (!trigger.is_empty()).then(|| trigger.into()),
             body: body.into(),
-            mode: Mode::WordEnd,
+            mode: Mode::Immediate, // the after-a-space mode is only kept for old phrases
             case_sensitive: false,
             enabled: true,
             hotkey: None,
@@ -357,22 +360,6 @@ impl Store {
         rows.collect()
     }
 
-    /// Replaces the tags of a snippet (created on the fly, case-insensitive).
-    pub fn set_tags(&mut self, snippet_id: i64, tags: &[&str]) -> Result<()> {
-        let tx = self.db.transaction()?;
-        write_tags(&tx, snippet_id, tags)?;
-        tx.execute("DELETE FROM tag WHERE id NOT IN (SELECT tag_id FROM snippet_tag)", [])?;
-        tx.commit()
-    }
-
-    pub fn tags(&self, snippet_id: i64) -> Result<Vec<String>> {
-        let mut st = self.db.prepare(
-            "SELECT t.name FROM tag t JOIN snippet_tag st ON st.tag_id = t.id
-             WHERE st.snippet_id = ?1 ORDER BY t.name COLLATE NOCASE",
-        )?;
-        let rows = st.query_map([snippet_id], |r| r.get(0))?;
-        rows.collect()
-    }
 
     /// Consistent copy of the whole database (safe while the app runs).
     pub fn backup_to(&self, path: &std::path::Path) -> Result<()> {
@@ -460,7 +447,7 @@ impl Store {
         self.db.execute("DELETE FROM trash", []).map(drop)
     }
 
-    /// Counts one use of a phrase (statistics).
+    /// Counts one use of a phrase (for the most-used-first order).
     pub fn count_use(&self, id: i64) -> Result<()> {
         self.db.execute("UPDATE snippet SET uses = uses + 1 WHERE id = ?1", [id]).map(drop)
     }
@@ -508,16 +495,6 @@ fn creates_loop(db: &Connection, id: i64, parent: Option<i64>) -> Result<bool> {
     Ok(false)
 }
 
-/// Replaces a snippet's tags (orphan tags are left for the caller to drop).
-fn write_tags<S: AsRef<str>>(db: &Connection, snippet_id: i64, tags: &[S]) -> Result<()> {
-    db.execute("DELETE FROM snippet_tag WHERE snippet_id = ?1", [snippet_id])?;
-    for t in tags.iter().map(|t| t.as_ref().trim()).filter(|t| !t.is_empty()) {
-        db.execute("INSERT OR IGNORE INTO tag (name) VALUES (?1)", [t])?;
-        db.execute("INSERT OR IGNORE INTO snippet_tag SELECT ?1, id FROM tag WHERE name = ?2", params![snippet_id, t])?;
-    }
-    Ok(())
-}
-
 fn entry(r: &Row) -> Result<Entry> {
     let mode: String = r.get(5)?;
     Ok(Entry {
@@ -560,7 +537,7 @@ mod tests {
     }
 
     #[test]
-    fn v5_allows_shared_triggers_and_keeps_tags() {
+    fn v5_allows_shared_triggers_and_keeps_children() {
         // a database as it was before V5
         let db = Connection::open_in_memory().unwrap();
         for sql in &MIGRATIONS[..4] {
@@ -573,14 +550,12 @@ mod tests {
              INSERT INTO snippet_tag VALUES (7, 1);",
         )
         .unwrap();
-        let mut s = Store::init(db).unwrap();
-        assert_eq!(s.tags(7).unwrap(), ["mail"], "rebuild must not cascade-delete tags");
+        let s = Store::init(db).unwrap();
         assert_eq!(s.usage().unwrap(), [(7, 3)]);
         assert_eq!(s.entries().unwrap()[0].hotkey.as_deref(), Some("Ctrl+Alt+B"));
         s.save(&Entry::new(None, "b", "btw", "y")).unwrap();
         assert_eq!(s.engine_snippets().unwrap().iter().filter(|e| e.trigger == "btw").count(), 2);
-        s.set_tags(7, &[]).unwrap(); // foreign keys back on: deleting still works
-        s.delete(7).unwrap();
+        s.delete(7).unwrap(); // foreign keys back on: deleting still works
         assert_eq!(s.entries().unwrap().len(), 1);
     }
 
@@ -631,17 +606,6 @@ mod tests {
         assert!(s.move_folder(a, Some(c)).unwrap(), "now allowed: C is no longer under A");
     }
 
-    #[test]
-    fn tags_replace_and_cleanup() {
-        let mut s = Store::open_in_memory().unwrap();
-        let id = s.save(&Entry::new(None, "n", "t", "b")).unwrap();
-        s.set_tags(id, &["clienti", "Email", " "]).unwrap();
-        assert_eq!(s.tags(id).unwrap(), ["clienti", "Email"]);
-        s.set_tags(id, &["email"]).unwrap();
-        assert_eq!(s.tags(id).unwrap(), ["Email"]); // same tag, case-insensitive
-        let orphans: i64 = s.db.query_row("SELECT COUNT(*) FROM tag", [], |r| r.get(0)).unwrap();
-        assert_eq!(orphans, 1);
-    }
 
     #[test]
     fn settings_and_hotkey() {

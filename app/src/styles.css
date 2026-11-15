@@ -127,15 +127,6 @@ kbd {
 
 .muted { color: var(--muted); }
 .pad { padding: 8px 14px; }
-.empty { margin-top: 30vh; text-align: center; }
-
-.status {
-  display: flex; align-items: center; gap: 12px; padding: 4px 10px; font-size: 12px;
-  background: var(--panel); border-top: 1px solid var(--border); color: var(--muted);
-}
-.pill { padding: 1px 10px; border-radius: 999px; font-size: 12px; }
-.pill.on { color: var(--accent); border-color: var(--accent); }
-.pill.off { color: var(--danger); border-color: var(--danger); }
 .msg.error { color: var(--danger); }
 .msg button.link { border: 0; background: none; padding: 0 0 0 10px; color: var(--accent); font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 
@@ -193,7 +184,7 @@ select { cursor: pointer; }
 .popup-hint button { padding: 1px 8px; font-size: 11px; }
 
 /* Desktop-app feel: interface chrome is not selectable text (Ctrl+A selects only inside fields). */
-.toolbar, .tree, .status, .popup-tabs, .popup-hint, .welcome, .field > span, .check, .macros { user-select: none; }
+.toolbar, .tree, .popup-tabs, .popup-hint, .welcome, .field > span, .check, .macros { user-select: none; }
 
 .button-like { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); cursor: pointer; }
 .button-like:hover { background: var(--hover); }

@@ -1,7 +1,7 @@
 //! Cloud sync data: the whole library as one document keyed by stable uids, merged per item
 //! (the most recent edit wins, deletions travel as tombstones).
 
-use super::{creates_loop, write_tags, Store, NOW};
+use super::{creates_loop, Store, NOW};
 use rusqlite::{params, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -57,6 +57,8 @@ pub struct SyncSnippet {
     pub hotkey: Option<String>,
     #[serde(default)] // documents written before manual order
     pub position: Option<i64>,
+    /// Always empty: tags are gone, kept so older versions can still read the document.
+    #[serde(default)]
     pub tags: Vec<String>,
     pub updated_at: String,
 }
@@ -176,7 +178,7 @@ impl Store {
                 ))
             })?
             .collect::<Result<_>>()?;
-        let snippets = rows.into_iter().map(|(id, s)| Ok(SyncSnippet { tags: self.tags(id)?, ..s })).collect::<Result<_>>()?;
+        let snippets = rows.into_iter().map(|(_, s)| s).collect();
         let mut st = self.db.prepare("SELECT uid, deleted_at FROM tombstone ORDER BY uid")?;
         let tombstones =
             st.query_map([], |r| Ok(Tombstone { uid: r.get(0)?, deleted_at: r.get(1)? }))?.collect::<Result<_>>()?;
@@ -241,8 +243,6 @@ impl Store {
                    case_sensitive = ?7, enabled = ?8, hotkey = ?9, updated_at = ?10, position = ?11",
                 params![s.uid, folder, s.name, s.trigger, s.body, mode, s.case_sensitive, s.enabled, s.hotkey, s.updated_at, s.position],
             )?;
-            let id: i64 = tx.query_row("SELECT id FROM snippet WHERE uid = ?1", [&s.uid], |r| r.get(0))?;
-            write_tags(&tx, id, &s.tags)?;
         }
         // everything not in `lib` goes: phrases first, so no folder cascade can reach a live one
         let live: HashSet<&str> = lib.folders.iter().map(|f| f.uid.as_str()).chain(lib.snippets.iter().map(|s| s.uid.as_str())).collect();
@@ -253,7 +253,6 @@ impl Store {
                 tx.execute(&format!("DELETE FROM {table} WHERE uid = ?1"), [uid])?;
             }
         }
-        tx.execute("DELETE FROM tag WHERE id NOT IN (SELECT tag_id FROM snippet_tag)", [])?;
         tx.execute("DELETE FROM tombstone", [])?; // the triggers above wrote local ones: keep the merged set only
         for t in &lib.tombstones {
             tx.execute("INSERT INTO tombstone (uid, deleted_at) VALUES (?1, ?2)", params![t.uid, t.deleted_at])?;
@@ -430,15 +429,13 @@ mod tests {
         pc1.set_folder_color(f, Some("#2f7de1")).unwrap();
         let mut keep = Entry::new(Some(f), "keep", "k", "v1");
         keep.id = pc1.save(&keep).unwrap();
-        let tags = pc1.save(&Entry::new(Some(f), "tagged", "t", "x")).unwrap();
-        pc1.set_tags(tags, &["mail"]).unwrap();
+        pc1.save(&Entry::new(Some(f), "tagged", "t", "x")).unwrap();
         let gone = pc1.save(&Entry::new(None, "gone", "g", "x")).unwrap();
 
         // PC1 uploads, PC2 (empty) downloads
         let cloud = merge(&pc1.sync_snapshot().unwrap(), &Library::default());
         pc2.apply_sync(&merge(&pc2.sync_snapshot().unwrap(), &cloud)).unwrap();
         assert_eq!(pc2.sync_snapshot().unwrap(), cloud, "PC2 has the whole library");
-        assert_eq!(pc2.tags(pc2.entries().unwrap().iter().find(|e| e.name == "tagged").unwrap().id).unwrap(), ["mail"]);
         assert_eq!(pc2.folders().unwrap()[0].name, "Lavoro");
         assert_eq!(pc2.folders().unwrap()[0].hotkey.as_deref(), Some("Ctrl+Alt+L"), "folder shortcut synced");
         assert_eq!(pc2.folders().unwrap()[0].color.as_deref(), Some("#2f7de1"), "folder colour synced");

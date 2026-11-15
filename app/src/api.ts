@@ -12,7 +12,6 @@ export type Entry = {
   caseSensitive: boolean;
   enabled: boolean;
   hotkey: string;
-  tags: string[];
   uses: number;
   shared: boolean;
 };

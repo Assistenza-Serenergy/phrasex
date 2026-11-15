@@ -54,17 +54,6 @@ struct PendingForm {
     reply: mpsc::Sender<Option<HashMap<String, String>>>,
 }
 
-/// ponytail: temporary diagnostics next to the exe (decisions only, never typed text);
-/// remove once expansion in the editor and the chooser are confirmed on the user's PC.
-fn diag(msg: &str) {
-    use std::io::Write;
-    let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())) else { return };
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("phrasex-debug.log")) {
-        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
-        let _ = writeln!(f, "{t} {msg}");
-    }
-}
-
 /// Serializes insertions (typed trigger, popup, tray, hotkey): one form / one injection at a time.
 static DELIVER: Mutex<()> = Mutex::new(());
 
@@ -82,7 +71,6 @@ struct EntryDto {
     case_sensitive: bool,
     enabled: bool,
     hotkey: String,
-    tags: Vec<String>,
     #[serde(default)]
     uses: i64,
     /// Part of a library someone shared with this user: read-only.
@@ -164,10 +152,9 @@ fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
-fn to_dto(store: &Store, e: Entry, uses: &HashMap<i64, i64>) -> Res<EntryDto> {
-    Ok(EntryDto {
+fn to_dto(e: Entry, uses: &HashMap<i64, i64>) -> EntryDto {
+    EntryDto {
         uses: uses.get(&e.id).copied().unwrap_or(0),
-        tags: store.tags(e.id).map_err(err)?, // ponytail: one query per phrase, fine below ~10k
         id: e.id,
         folder_id: e.folder_id,
         name: e.name,
@@ -178,7 +165,7 @@ fn to_dto(store: &Store, e: Entry, uses: &HashMap<i64, i64>) -> Res<EntryDto> {
         enabled: e.enabled,
         hotkey: e.hotkey.unwrap_or_default(),
         shared: false,
-    })
+    }
 }
 
 fn load_settings(app: &AppHandle, store: &Store) -> Settings {
@@ -420,9 +407,6 @@ fn sync_now_inner(app: &AppHandle) -> SyncStatus {
         SYNC_DIRTY.store(false, Relaxed);
         let result = sync_round(app);
         let share = if result.is_ok() && cloud::sharing_configured() { share_round(app).err().unwrap_or_default() } else { String::new() };
-        if !share.is_empty() {
-            diag(&format!("share: {share}"));
-        }
         (result, share)
     };
     let state = app.state::<AppState>();
@@ -486,10 +470,8 @@ fn sync_login(app: AppHandle) -> Res<SyncStatus> {
     for _ in 0..15 {
         std::thread::sleep(Duration::from_millis(200));
         if phrasex_listener::close_tab_titled(cloud::LOGIN_DONE_TITLE) {
-            diag("login tab: ctrl+w sent");
             break;
         }
-        diag(&format!("login tab: focused {}", phrasex_listener::foreground_exe()));
     }
     let h = app.clone();
     let _ = app.run_on_main_thread(move || {
@@ -555,8 +537,8 @@ fn library(state: State<AppState>) -> Res<Library> {
             .collect(),
         entries: entries
             .into_iter()
-            .map(|e| Ok(EntryDto { shared: shared_entries.contains(&e.id), ..to_dto(&store, e, &uses)? }))
-            .collect::<Res<_>>()?,
+            .map(|e| EntryDto { shared: shared_entries.contains(&e.id), ..to_dto(e, &uses) })
+            .collect(),
         paused: state.paused.load(Relaxed),
     })
 }
@@ -577,7 +559,7 @@ fn save_entry(app: AppHandle, state: State<AppState>, entry: EntryDto) -> Res<i6
     if !hotkey.is_empty() && hotkey.parse::<Shortcut>().is_err() {
         return Err("invalid_hotkey".into());
     }
-    let mut store = state.store.lock().unwrap();
+    let store = state.store.lock().unwrap();
     own_only(&store, &[entry.id], &[entry.folder_id])?;
     let trigger = entry.trigger.trim();
     let id = store
@@ -593,8 +575,6 @@ fn save_entry(app: AppHandle, state: State<AppState>, entry: EntryDto) -> Res<i6
             hotkey: (!hotkey.is_empty()).then_some(hotkey),
         })
         .map_err(err)?;
-    let tags: Vec<&str> = entry.tags.iter().map(String::as_str).collect();
-    store.set_tags(id, &tags).map_err(err)?;
     let (failed, _, _) = reload(&app, &store)?;
     if failed.contains(&id) {
         return Err(format!("hotkey_unavailable:{id}"));
@@ -639,7 +619,7 @@ fn delete_entry(app: AppHandle, state: State<AppState>, id: i64) -> Res<()> {
     own_only(&store, &[id], &[])?;
     if let Some(mut e) = store.entries().map_err(err)?.into_iter().find(|e| e.id == id) {
         let (name, parent) = (e.name.clone(), e.folder_id.take());
-        let file = snapshot(&store, vec![], vec![e])?;
+        let file = snapshot(vec![], vec![e])?;
         store.add_trash(&name, false, parent, &serde_json::to_string(&file).map_err(err)?).map_err(err)?;
     }
     store.delete(id).map_err(err)?;
@@ -911,7 +891,7 @@ fn file_safe(name: &str) -> String {
 }
 
 /// Snapshot of some folders and phrases in the export format.
-fn snapshot(store: &Store, folders: Vec<Folder>, entries: Vec<Entry>) -> Res<ExportFile> {
+fn snapshot(folders: Vec<Folder>, entries: Vec<Entry>) -> Res<ExportFile> {
     let uses = HashMap::new();
     Ok(ExportFile {
         app: "Phrase X".into(),
@@ -920,7 +900,7 @@ fn snapshot(store: &Store, folders: Vec<Folder>, entries: Vec<Entry>) -> Res<Exp
             .into_iter()
             .map(|f| ExportFolder { id: f.id, parent_id: f.parent_id, name: f.name, hotkey: f.hotkey.unwrap_or_default(), color: f.color.unwrap_or_default() })
             .collect(),
-        phrases: entries.into_iter().map(|e| to_dto(store, e, &uses)).collect::<Res<_>>()?,
+        phrases: entries.into_iter().map(|e| to_dto(e, &uses)).collect(),
     })
 }
 
@@ -934,7 +914,7 @@ fn folder_snapshot(store: &Store, root: i64) -> Res<(ExportFile, String, Option<
     entries.retain(|e| e.folder_id.is_some_and(|f| keep.contains(&f)));
     let f = folders.iter_mut().find(|f| f.id == root).ok_or("folder_missing")?;
     let (name, parent) = (f.name.clone(), f.parent_id.take());
-    Ok((snapshot(store, folders, entries)?, name, parent))
+    Ok((snapshot(folders, entries)?, name, parent))
 }
 
 /// Writes the whole library, or one folder with its subfolders, to
@@ -953,7 +933,7 @@ fn export_data(state: State<AppState>, folder_id: Option<i64>) -> Res<String> {
             let mut entries = store.entries().map_err(err)?;
             folders.retain(|f| !shared_folders.contains(&f.id));
             entries.retain(|e| !shared_entries.contains(&e.id));
-            (snapshot(&store, folders, entries)?, String::new())
+            (snapshot(folders, entries)?, String::new())
         }
     };
     let docs = std::path::PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()).join("Documents");
@@ -977,9 +957,7 @@ fn import_phrase(store: &mut Store, report: &mut ImportReport, folder: Option<i6
         // shortcuts are machine-specific: only kept when restoring from the trash
         hotkey: Some(p.hotkey).filter(|h| keep_hotkey && !h.is_empty()),
     };
-    let id = store.save(&e).map_err(err)?;
-    let tags: Vec<&str> = p.tags.iter().map(String::as_str).collect();
-    store.set_tags(id, &tags).map_err(err)?;
+    store.save(&e).map_err(err)?;
     report.phrases += 1;
     Ok(())
 }
@@ -1034,7 +1012,7 @@ fn paste_items(app: AppHandle, state: State<AppState>, folders: Vec<i64>, entrie
     }
     let mut picked: Vec<Entry> = store.entries().map_err(err)?.into_iter().filter(|e| entries.contains(&e.id)).collect();
     picked.iter_mut().for_each(|e| e.folder_id = None);
-    let file = snapshot(&store, vec![], picked)?;
+    let file = snapshot(vec![], picked)?;
     import_snapshot(&mut store, &mut report, file, target, false)?;
     reload(&app, &store)?;
     Ok(report)
@@ -1064,7 +1042,7 @@ fn import_data(app: AppHandle, state: State<AppState>, content: String, file_nam
                 }
                 let p = EntryDto {
                     id: 0, folder_id: None, name: cols[0].clone(), trigger: cols[1].clone(), body: cols[2].clone(),
-                    immediate: false, case_sensitive: false, enabled: true, hotkey: String::new(), tags: vec![], uses: 0, shared: false,
+                    immediate: true, case_sensitive: false, enabled: true, hotkey: String::new(), uses: 0, shared: false,
                 };
                 import_phrase(&mut store, &mut report, root, p, false)?;
             }
@@ -1281,9 +1259,7 @@ fn popup_hide(app: AppHandle, state: State<AppState>) {
     if let Some(w) = app.get_webview_window("popup") {
         let _ = w.hide();
     }
-    if state.choice.lock().unwrap().take().is_some() {
-        diag("chooser closed (focus lost or Esc)"); // closing the chooser = cancel
-    }
+    state.choice.lock().unwrap().take(); // closing the chooser = cancel
 }
 
 /// Several phrases share what was typed (or pressed): ask which one, next to the caret.
@@ -1295,9 +1271,7 @@ fn offer_choice(app: &AppHandle, choice: Choice) {
 /// Phrase ids the chooser must list, in order.
 #[tauri::command]
 fn choice_pending(state: State<AppState>) -> Option<Vec<i64>> {
-    let ids = state.choice.lock().unwrap().as_ref().map(|c| c.ids.clone());
-    diag(&format!("chooser asks: {:?}", ids.as_ref().map(Vec::len)));
-    ids
+    state.choice.lock().unwrap().as_ref().map(|c| c.ids.clone())
 }
 
 /// Inserts the picked phrase in place of the typed abbreviation; `None` = cancel (the text stays as typed).
@@ -1416,7 +1390,6 @@ fn deliver(app: &AppHandle, backspaces: usize, body: &str, case: Case) -> Option
     let _one_at_a_time = DELIVER.lock().unwrap_or_else(|p| p.into_inner());
     let actions = macros::render_actions(body, &AppContext { app });
     phrasex_listener::restore_focus();
-    diag(&format!("deliver into fg={:#x}", phrasex_listener::foreground_window()));
     let actions = actions?;
     phrasex_listener::inject(backspaces, "");
     let (mut inserted, mut after_cursor, mut only_text, mut first) = (0usize, None::<usize>, true, true);
@@ -1478,7 +1451,6 @@ fn run_engine(app: AppHandle, keys: mpsc::Receiver<Key>) {
     let (engine, paused, excluded) = (state.engine.clone(), state.paused.clone(), state.excluded.clone());
     let mut undo: Option<(usize, String)> = None; // (inserted chars, what the user typed)
     let mut exe = (0isize, String::new()); // foreground window -> executable, cached
-    let mut last_seen = (0isize, false, false);
     while let Ok(key) = keys.recv() {
         let fg = phrasex_listener::foreground_window();
         if fg != exe.0 {
@@ -1488,16 +1460,6 @@ fn run_engine(app: AppHandle, keys: mpsc::Receiver<Key>) {
         let own_blocked = phrasex_listener::foreground_is_own_process()
             && (fg != state.main_window.load(Relaxed) || state.no_expand.load(Relaxed));
         let blocked = paused.load(Relaxed) || own_blocked || excluded.lock().unwrap().contains(&exe.1);
-        let seen = (fg, own_blocked, blocked);
-        if seen != last_seen {
-            last_seen = seen;
-            diag(&format!(
-                "focus fg={fg:#x} exe={} main={:#x} no_expand={} own_blocked={own_blocked} blocked={blocked}",
-                exe.1,
-                state.main_window.load(Relaxed),
-                state.no_expand.load(Relaxed)
-            ));
-        }
         if blocked {
             engine.lock().unwrap().feed(Key::Reset);
             undo = None;
@@ -1514,7 +1476,6 @@ fn run_engine(app: AppHandle, keys: mpsc::Receiver<Key>) {
         undo = None;
         let hit = engine.lock().unwrap().feed(key);
         if let Some(e) = hit {
-            diag(&format!("hit phrases={} backspaces={}", e.ids.len(), e.backspaces));
             if e.ids.len() > 1 {
                 offer_choice(&app, Choice { ids: e.ids, backspaces: e.backspaces, case: e.case, suffix: e.suffix });
                 continue;
@@ -1576,7 +1537,7 @@ async fn check_update(app: AppHandle) {
             let _ = app.emit("update-available", update.version);
         }
         Ok(None) => {}
-        Err(e) => diag(&format!("update check: {e}")), // offline or no release yet: try again next start
+        Err(_) => {} // offline or no release yet: try again next start
     }
 }
 
@@ -1675,7 +1636,6 @@ fn show_popup(app: &AppHandle, mode: &str) {
         phrasex_listener::force_foreground(hwnd.0 as isize); // the user is typing in another app
     }
     let _ = w.set_focus();
-    diag(&format!("popup {mode} at {px},{py} fg={:#x}", phrasex_listener::foreground_window()));
     let _ = app.emit_to("popup", "popup-show", mode);
 }
 
@@ -1786,7 +1746,6 @@ fn main() {
                 let hwnd = hwnd.0 as isize;
                 phrasex_listener::set_main_window(hwnd);
                 handle.state::<AppState>().main_window.store(hwnd, Relaxed);
-                diag(&format!("start main={hwnd:#x}"));
             }
             let keys = phrasex_listener::start()?;
             let watcher = handle.clone();
@@ -1852,7 +1811,7 @@ mod tests {
     }
 
     #[test]
-    fn folder_snapshot_restores_tree_hotkeys_and_tags() {
+    fn folder_snapshot_restores_tree_and_hotkeys() {
         use super::*;
         let mut s = Store::open_in_memory().unwrap();
         let top = s.add_folder(None, "Top").unwrap();
@@ -1861,8 +1820,7 @@ mod tests {
         s.set_folder_hotkey(a, Some("Ctrl+Alt+A")).unwrap();
         let mut e = Entry::new(Some(b), "Firma", "fir", "Saluti");
         e.hotkey = Some("Ctrl+Alt+F".into());
-        let id = s.save(&e).unwrap();
-        s.set_tags(id, &["mail"]).unwrap();
+        s.save(&e).unwrap();
         let (file, name, parent) = folder_snapshot(&s, a).unwrap();
         assert_eq!((name.as_str(), parent), ("A", Some(top)));
         s.delete_folder(a).unwrap();
@@ -1876,6 +1834,5 @@ mod tests {
         assert_eq!(new_a.hotkey.as_deref(), Some("Ctrl+Alt+A"), "folder shortcut restored");
         let restored = s.entries().unwrap().into_iter().find(|e| e.name == "Firma").unwrap();
         assert_eq!((restored.folder_id, restored.trigger.as_deref(), restored.hotkey.as_deref()), (Some(new_b.id), Some("fir"), Some("Ctrl+Alt+F")));
-        assert_eq!(s.tags(restored.id).unwrap(), ["mail"]);
     }
 }
