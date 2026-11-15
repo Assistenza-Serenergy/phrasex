@@ -251,3 +251,10 @@ button.danger-fill { background: var(--danger); border-color: var(--danger); col
 .toast.error { color: var(--danger); border-color: var(--danger); }
 .toast button.link { border: 0; background: none; padding: 0 0 0 10px; color: var(--accent); font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 button.paused-badge { color: var(--danger); border-color: var(--danger); }
+
+/* ---------- settings: side tabs, one section at a time ---------- */
+.settings-layout { display: flex; gap: 16px; align-items: flex-start; max-width: 1100px; }
+.settings-tabs { flex: none; width: 200px; display: flex; flex-direction: column; gap: 2px; user-select: none; }
+.settings-tabs button { justify-content: flex-start; border: 0; background: none; padding: 7px 12px; border-radius: 6px; }
+.settings-tabs button.on { background: var(--selected); font-weight: 600; }
+.settings-layout .settings { flex: 1; min-width: 0; }

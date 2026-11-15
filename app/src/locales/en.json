@@ -175,5 +175,6 @@
   "clipHistoryTip": "Text copied from password managers is never saved.",
   "importTip": "CSV columns: description; abbreviation; text",
   "sharedTip": "A menu opens to pick the phrase.",
-  "folderHotkeyTip": "Opens the menu with this folder's phrases."
+  "folderHotkeyTip": "Opens the menu with this folder's phrases.",
+  "settingsAccountTab": "Account and sharing"
 }
