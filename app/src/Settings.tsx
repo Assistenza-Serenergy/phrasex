@@ -4,13 +4,14 @@ import { api, type Settings, type SyncStatus } from "./api";
 import { errText, resolveLang, type T } from "./i18n";
 import { HotkeyInput } from "./HotkeyInput";
 
-type Msg = { text: string; error: boolean };
+type Msg = { text: string; error: boolean; title?: string }; // title = tooltip (e.g. the exported file path)
 export const IMPORT_ACCEPT = ".json,.csv,.txt";
 
 /** Exports the library (or one folder) to a shareable file; returns the status message. */
 export async function exportLibrary(t: T, folderId: number | null = null): Promise<Msg> {
   try {
-    return { text: t("exported", { path: await api.exportData(folderId) }), error: false };
+    const path = await api.exportData(folderId);
+    return { text: t("exported"), error: false, title: path };
   } catch (e) {
     return { text: errText(t, e), error: true };
   }
@@ -203,11 +204,10 @@ export function SettingsView({ initial, onSaved, onImported, t }: { initial: Set
         <input type="checkbox" checked={s.autostart} onChange={(e) => setS({ ...s, autostart: e.target.checked })} />
         {t("autostart")}
       </label>
-      <label className="check">
+      <label className="check" title={t("runAsAdminHint")}>
         <input type="checkbox" checked={s.runAsAdmin} onChange={(e) => setS({ ...s, runAsAdmin: e.target.checked })} />
         {t("runAsAdmin")}
       </label>
-      <p className="muted">{t("runAsAdminHint")}</p>
 
       <h2>{t("settingsWriting")}</h2>
       <label className="check">
@@ -230,7 +230,7 @@ export function SettingsView({ initial, onSaved, onImported, t }: { initial: Set
       </div>
 
       <h2>{t("settingsClipboard")}</h2>
-      <label className="check">
+      <label className="check" title={t("clipHistoryTip")}>
         <input type="checkbox" checked={s.clipHistory} onChange={(e) => setS({ ...s, clipHistory: e.target.checked })} />
         {t("clipHistory")}
       </label>
@@ -280,7 +280,7 @@ export function SettingsView({ initial, onSaved, onImported, t }: { initial: Set
       <p className="muted">{t("dataHint")}</p>
       <div className="row">
         <button type="button" onClick={async () => setMsg(await exportLibrary(t))}>{t("exportData")}</button>
-        <label className="button-like">
+        <label className="button-like" title={t("importTip")}>
           {t("importData")}
           <input type="file" accept={IMPORT_ACCEPT} hidden onChange={async (e) => {
             const r = await importPicked(t, e.currentTarget);
@@ -294,7 +294,7 @@ export function SettingsView({ initial, onSaved, onImported, t }: { initial: Set
       </div>
 
       <div className="row checks">
-        {msg ? <span className={msg.error ? "msg error" : "msg"} role="status">{msg.text}</span> : null}
+        {msg ? <span className={msg.error ? "msg error" : "msg"} role="status" title={msg.title}>{msg.text}</span> : null}
         <span className="spacer" />
         <button className="primary" type="submit">{t("save")}</button>
       </div>

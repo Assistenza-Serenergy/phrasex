@@ -75,7 +75,7 @@ export default function App() {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set());
-  const [msg, setMsg] = useState<{ text: string; error: boolean; undo?: number[] } | null>(null); // undo = trash ids to restore
+  const [msg, setMsg] = useState<{ text: string; error: boolean; title?: string; undo?: number[] } | null>(null); // undo = trash ids to restore
   const nameRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
@@ -103,7 +103,7 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (!msg) return;
-    const id = setTimeout(() => setMsg(null), msg.error || msg.undo?.length ? 8000 : 3000); // the message disappears by itself
+    const id = setTimeout(() => setMsg(null), msg.error || msg.undo?.length || msg.title ? 8000 : 3000); // the message disappears by itself
     return () => clearTimeout(id);
   }, [msg]);
   useEffect(() => void loadTrash(), []);
@@ -872,11 +872,10 @@ export default function App() {
                 <span>{t("folderName")}</span>
                 <input ref={nameRef} value={folderName} onChange={(e) => setFolderName(e.target.value)} />
               </label>
-              <label className="field">
+              <label className="field" title={t("folderHotkeyTip")}>
                 <span>{t("hotkey")}</span>
                 <HotkeyInput value={folderHotkey} placeholder={t("hotkeyHint")} onChange={setFolderHotkey} />
               </label>
-              {readOnly ? null : <p className="muted">{t("folderHotkeyHint")}</p>}
               <div className="row end">
                 {readOnly ? <span className="muted">{t("readOnly")}</span> : (
                   <>
@@ -898,7 +897,7 @@ export default function App() {
       </main>
 
       {msg ? (
-        <div className={msg.error ? "toast error" : "toast"} role="status">
+        <div className={msg.error ? "toast error" : "toast"} role="status" title={msg.title}>
           {msg.text}
           {msg.undo?.length ? <button className="link" onClick={() => void undoDelete(msg.undo!)}>{t("undo")}</button> : null}
         </div>
@@ -1034,7 +1033,6 @@ function TrashView({ items, selected, group, onSelect, onCancelGroup, onRestore,
     return (
       <div className="editor">
         <h2>{t("trashSelected", { n: group.length })}</h2>
-        <p className="muted">{t("trashGroupHint")}</p>
         <div className="row">
           <button className="primary" onClick={() => void onRestore(group)}>{t("trashRestore")}</button>
           <ConfirmButton label="trashDeleteForever" confirm="trashConfirmForever" onConfirm={() => onDelete(group)} t={t} />
@@ -1242,9 +1240,9 @@ function Editor({ draft, setDraft, folderOptions, dirty, readOnly, nameRef, onSa
         </label>
       </div>
       {sameTrigger.length || sameHotkey.length ? (
-        <p className="muted shared-note">
+        <p className="muted shared-note" title={t("sharedTip")}>
           {sameTrigger.length ? t("sharedTrigger", { names: sameTrigger.join(", ") }) : null}
-          {sameTrigger.length && sameHotkey.length ? " " : null}
+          {sameTrigger.length && sameHotkey.length ? <br /> : null}
           {sameHotkey.length ? t("sharedHotkey", { names: sameHotkey.join(", ") }) : null}
         </p>
       ) : null}
