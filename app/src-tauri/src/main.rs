@@ -1452,6 +1452,7 @@ fn run_engine(app: AppHandle, keys: mpsc::Receiver<Key>) {
     let mut undo: Option<(usize, String)> = None; // (inserted chars, what the user typed)
     let mut exe = (0isize, String::new()); // foreground window -> executable, cached
     while let Ok(key) = keys.recv() {
+        phrasex_listener::CAPITAL_NEXT.store(false, Relaxed); // set again below only when allowed here
         let fg = phrasex_listener::foreground_window();
         if fg != exe.0 {
             exe = (fg, phrasex_listener::foreground_exe());
@@ -1475,6 +1476,9 @@ fn run_engine(app: AppHandle, keys: mpsc::Receiver<Key>) {
         }
         undo = None;
         let hit = engine.lock().unwrap().feed(key);
+        if hit.is_none() {
+            phrasex_listener::CAPITAL_NEXT.store(engine.lock().unwrap().capital_next(), Relaxed);
+        }
         if let Some(e) = hit {
             if e.ids.len() > 1 {
                 offer_choice(&app, Choice { ids: e.ids, backspaces: e.backspaces, case: e.case, suffix: e.suffix });

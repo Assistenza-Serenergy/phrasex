@@ -57,6 +57,10 @@ pub fn start() -> Result<mpsc::Receiver<Key>, String> {
     Ok(rx)
 }
 
+/// Set by the app after every key: the next lowercase letter starts a sentence. The hook then swallows
+/// that key and types the capital instead, so nothing has to be erased afterwards.
+pub static CAPITAL_NEXT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn send(key: Key) {
     if let Some(tx) = TX.get() {
         let _ = tx.send(key);
@@ -74,8 +78,8 @@ unsafe extern "system" fn keyboard_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LR
                 if let Some(Ok(c)) = char::decode_utf16([k.scanCode as u16]).next() {
                     send(if c.is_control() { Key::Reset } else { Key::Char(c) });
                 }
-            } else {
-                translate(k.vkCode, k.scanCode);
+            } else if translate(k.vkCode, k.scanCode) {
+                return 1; // swallowed: replaced by its capital
             }
         }
     }
@@ -132,11 +136,15 @@ unsafe fn window_pid(hwnd: HWND) -> u32 {
 }
 
 /// VK -> characters using the keyboard layout of the foreground window (Italian, AltGr, Shift...).
-unsafe fn translate(vk: u32, scan: u32) {
+/// Sends the key to the engine; true when the key was swallowed (sentence capital typed instead).
+unsafe fn translate(vk: u32, scan: u32) -> bool {
     match vk as VIRTUAL_KEY {
-        VK_BACK => return send(Key::Backspace),
+        VK_BACK => {
+            send(Key::Backspace);
+            return false;
+        }
         VK_SHIFT | VK_LSHIFT | VK_RSHIFT | VK_CONTROL | VK_LCONTROL | VK_RCONTROL | VK_MENU
-        | VK_LMENU | VK_RMENU | VK_CAPITAL | VK_LWIN | VK_RWIN => return, // modifiers alone
+        | VK_LMENU | VK_RMENU | VK_CAPITAL | VK_LWIN | VK_RWIN => return false, // modifiers alone
         _ => {}
     }
     let mut state = [0u8; 256];
@@ -151,14 +159,26 @@ unsafe fn translate(vk: u32, scan: u32) {
     // Flag 0x4: do not alter the kernel keyboard state (keeps the user's dead keys intact).
     let n = ToUnicodeEx(vk, scan, state.as_ptr(), buf.as_mut_ptr(), buf.len() as i32, 0x4, layout);
     if n < 0 {
-        return; // ponytail: dead key ignored (none on the IT layout); compose it if other layouts need it
+        return false; // ponytail: dead key ignored (none on the IT layout); compose it if other layouts need it
     }
     // n == 0 (arrows, Home, F-keys...) or a control char (Enter, Tab, Esc, Ctrl+X) => caret context lost.
     let chars: Vec<char> = char::decode_utf16(buf[..n as usize].iter().copied()).filter_map(Result::ok).collect();
     if chars.is_empty() || chars.iter().any(|c| c.is_control()) {
-        return send(Key::Reset);
+        send(Key::Reset);
+        return false;
+    }
+    if let [c] = chars[..] {
+        let mut upper = c.to_uppercase();
+        if let (Some(u), None) = (upper.next(), upper.next()) {
+            if c.is_lowercase() && CAPITAL_NEXT.swap(false, Relaxed) {
+                send_input(&char_stroke(u, layout));
+                send(Key::Char(u));
+                return true;
+            }
+        }
     }
     chars.into_iter().for_each(|c| send(Key::Char(c)));
+    false
 }
 
 /// True when the focused window belongs to this process (don't expand inside our own editor).

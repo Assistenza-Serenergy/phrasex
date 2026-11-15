@@ -181,15 +181,20 @@ impl Engine {
         })
     }
 
+    /// Sentence start (a word, then . ! or ? and a space): the next lowercase letter should be a capital.
+    /// The keyboard hook swaps that key itself; erasing and retyping raced with fast typing ("cCiao").
+    pub fn capital_next(&self) -> bool {
+        let len = self.buf.len();
+        self.opts.capitalize_sentences
+            && len >= 3
+            && self.buf[len - 3].is_alphabetic()
+            && matches!(self.buf[len - 2], '.' | '!' | '?')
+            && self.buf[len - 1] == ' '
+    }
+
     /// Writing assistance, applied only when no phrase matched.
     fn assist(&self, last: char) -> Option<Expansion> {
         let len = self.buf.len();
-        if self.opts.capitalize_sentences && last.is_lowercase() && len >= 4 {
-            let (end, space, prev) = (self.buf[len - 3], self.buf[len - 2], self.buf[len - 4]);
-            if matches!(end, '.' | '!' | '?') && space == ' ' && prev.is_alphabetic() {
-                return Some(Expansion { backspaces: 1, text: last.to_uppercase().collect(), typed: last.to_string(), case: Case::AsIs, ids: vec![], suffix: String::new() });
-            }
-        }
         if self.opts.fix_double_caps && !last.is_alphanumeric() {
             let word: Vec<char> = self.buf[..len - 1].iter().rev().take_while(|c| c.is_alphabetic()).copied().collect::<Vec<_>>().into_iter().rev().collect();
             let starts_at = len - 1 - word.len();
@@ -304,8 +309,12 @@ mod tests {
         let mut e = Engine::with_options(vec![], opts);
         assert_eq!(typed(&mut e, "DOmani "), exp(7, "Domani "));
         assert_eq!(typed(&mut e, "USA "), None); // all caps: an acronym, left alone
-        assert_eq!(typed(&mut e, "Ciao. c"), exp(1, "C"));
-        assert_eq!(typed(&mut e, "v1.2 x"), None); // no letter before the dot
+        assert_eq!(typed(&mut e, "Ciao. "), None);
+        assert!(e.capital_next(), "after a full stop and a space the next letter is a capital");
+        assert_eq!(typed(&mut e, "C"), None);
+        assert!(!e.capital_next());
+        typed(&mut e, "v1. ");
+        assert!(!e.capital_next(), "no letter before the dot");
         let mut off = Engine::new(vec![]);
         assert_eq!(typed(&mut off, "DOmani "), None);
     }
