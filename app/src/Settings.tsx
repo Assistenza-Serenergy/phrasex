@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, type Settings, type SyncStatus } from "./api";
 import { errText, resolveLang, type T } from "./i18n";
@@ -129,22 +129,34 @@ export function SettingsView({ initial, onSaved, onImported, t }: { initial: Set
     setNewApp("");
   };
 
-  async function save() {
-    try {
-      await api.saveSettings(s);
-      setMsg({ text: t("saved"), error: false });
-      onSaved(s);
-      if (s.shareWith.join() !== initial.shareWith.join()) void api.syncNow(); // publish the new list now, not in a few minutes
-    } catch (e) {
-      setMsg({ text: errText(t, e), error: true });
-      onSaved(s); // saved anyway, only the shortcut registration failed
-    }
-  }
+  // Autosave: every change is written shortly after it is made (no Save button).
+  const last = useRef(s);
+  useEffect(() => {
+    if (s === last.current) return;
+    const id = setTimeout(async () => {
+      const prev = last.current;
+      last.current = s;
+      try {
+        await api.saveSettings(s);
+        setMsg((m) => (m?.error ? null : m)); // an old error is fixed now
+        onSaved(s);
+        if (s.shareWith.join() !== prev.shareWith.join()) void api.syncNow(); // publish the new list now, not in a few minutes
+      } catch (e) {
+        setMsg({ text: errText(t, e), error: true });
+        if (String(e) === "admin_cancelled") {
+          const back = { ...s, runAsAdmin: prev.runAsAdmin }; // the box goes back, nothing to save again
+          last.current = back;
+          setS(back);
+        } else onSaved(s); // saved anyway, only the shortcut registration failed
+      }
+    }, 600);
+    return () => clearTimeout(id);
+  }, [s]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const suggestions = recent.filter((r) => !s.excludedApps.includes(r) && r !== "phrasex-app.exe");
 
   return (
-    <form className="editor settings" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+    <form className="editor settings" onSubmit={(e) => e.preventDefault()}>
       <CloudSync t={t} />
 
       <h2>{t("settingsShare")}</h2>
@@ -293,11 +305,7 @@ export function SettingsView({ initial, onSaved, onImported, t }: { initial: Set
         <button type="button" onClick={() => void api.openBackups()}>{t("openBackups")}</button>
       </div>
 
-      <div className="row checks">
-        {msg ? <span className={msg.error ? "msg error" : "msg"} role="status" title={msg.title}>{msg.text}</span> : null}
-        <span className="spacer" />
-        <button className="primary" type="submit">{t("save")}</button>
-      </div>
+      {msg ? <p className={msg.error ? "msg error" : "msg"} role="status" title={msg.title}>{msg.text}</p> : null}
     </form>
   );
 }

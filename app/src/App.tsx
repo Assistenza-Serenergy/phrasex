@@ -215,19 +215,13 @@ export default function App() {
     let l = lib;
     try {
       if (dirty && draft) {
-        let id = draft.id;
-        let warning: unknown = null;
         try {
-          id = await api.saveEntry(fromDraft(draft));
+          await api.saveEntry(fromDraft(draft));
         } catch (e) {
           if (!String(e).startsWith("hotkey_unavailable")) throw e;
-          warning = e; // saved, only the shortcut is taken
+          if (draft.hotkey !== selectedEntry?.hotkey) fail(e); // saved, only the shortcut is taken
         }
-        l = await refresh();
-        const saved = l.entries.find((x) => x.id === id);
-        if (saved) setDraft(toDraft(saved)); // pick up normalized trigger/tags
-        if (warning) fail(warning);
-        else setMsg({ text: t("saved"), error: false });
+        l = await refresh(); // the draft stays as typed: autosave must not touch what is being written
       }
       if (folderDirty && selectedFolder) {
         if (folderRenamed) await api.renameFolder(selectedFolder.id, folderName);
@@ -242,13 +236,20 @@ export default function App() {
         }
         l = await refresh();
         if (warning) fail(warning);
-        else setMsg({ text: t("saved"), error: false });
       }
       return l;
     } catch (e) {
       return fail(e);
     }
   }
+
+  // Autosave (no Save button): edits are written shortly after the last keystroke, one save at a time.
+  const saving = useRef<Promise<unknown>>(Promise.resolve());
+  useEffect(() => {
+    if (!dirty && !folderDirty) return;
+    const id = setTimeout(() => (saving.current = saving.current.then(saveCurrent)), 600);
+    return () => clearTimeout(id);
+  }, [draft, folderName, folderHotkey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function select(next: Sel) {
     const l = await saveCurrent();
@@ -691,10 +692,6 @@ export default function App() {
     <div
       className="app"
       onKeyDown={(e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
-          e.preventDefault();
-          void saveCurrent();
-        }
         if (e.key === "Escape") {
           setMulti([]);
           setTrashMulti([]);
@@ -864,9 +861,9 @@ export default function App() {
               </div>
             </div>
           ) : draft ? (
-            <Editor draft={draft} setDraft={setDraft} folderOptions={folderOptions} dirty={dirty} readOnly={readOnly} nameRef={nameRef} onSave={saveCurrent} entries={lib?.entries ?? []} t={t} />
+            <Editor draft={draft} setDraft={setDraft} folderOptions={folderOptions} readOnly={readOnly} nameRef={nameRef} entries={lib?.entries ?? []} t={t} />
           ) : selectedFolder ? (
-            <form className="editor" onSubmit={(e) => { e.preventDefault(); void saveCurrent(); }}>
+            <form className="editor" onSubmit={(e) => e.preventDefault()}>
               <fieldset className="contents" disabled={readOnly}>
               <label className="field">
                 <span>{t("folderName")}</span>
@@ -880,7 +877,6 @@ export default function App() {
                 {readOnly ? <span className="muted">{t("readOnly")}</span> : (
                   <>
                     <button type="button" onClick={() => void sortFolder(selectedFolder.id)}>{t("ctxSortAZ")}</button>
-                    <button className="primary" type="submit" disabled={!folderDirty}>{t("save")}</button>
                   </>
                 )}
               </div>
@@ -1138,9 +1134,7 @@ type EditorProps = {
   draft: Draft;
   setDraft: Dispatch<SetStateAction<Draft | null>>;
   folderOptions: FolderOption[];
-  dirty: boolean;
   nameRef: RefObject<HTMLInputElement>;
-  onSave: () => unknown;
   entries: Entry[];
   readOnly: boolean;
   t: T;
@@ -1170,7 +1164,7 @@ const FIELD_TEMPLATES: [Key, Key][] = [
   ["fieldDate", "fieldDateLabel"],
 ];
 
-function Editor({ draft, setDraft, folderOptions, dirty, readOnly, nameRef, onSave, entries, t }: EditorProps) {
+function Editor({ draft, setDraft, folderOptions, readOnly, nameRef, entries, t }: EditorProps) {
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   // Other phrases with the same abbreviation / shortcut: typing it opens a menu to pick one.
   const sharing = (key: "trigger" | "hotkey") => {
@@ -1193,7 +1187,7 @@ function Editor({ draft, setDraft, folderOptions, dirty, readOnly, nameRef, onSa
   }
 
   return (
-    <form className="editor" onSubmit={(e) => { e.preventDefault(); onSave(); }}>
+    <form className="editor" onSubmit={(e) => e.preventDefault()}>
       <fieldset className="contents" disabled={readOnly}>
       <label className="field">
         <span>{t("name")}</span>
@@ -1265,8 +1259,7 @@ function Editor({ draft, setDraft, folderOptions, dirty, readOnly, nameRef, onSa
           {t("enabled")}
         </label>
         <span className="spacer" />
-        {dirty ? <span className="muted">{t("unsaved")}</span> : null}
-        {readOnly ? <span className="muted">{t("readOnly")}</span> : <button className="primary" type="submit" disabled={!dirty}>{t("save")}</button>}
+        {readOnly ? <span className="muted">{t("readOnly")}</span> : null}
       </div>
       </fieldset>
     </form>
