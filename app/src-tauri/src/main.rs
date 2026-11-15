@@ -1558,6 +1558,41 @@ fn watch_clipboard(app: AppHandle) {
     }
 }
 
+// ---------- updates (GitHub Releases) ----------
+
+/// Newer version found at start, shown as a button in the toolbar.
+static UPDATE: Mutex<Option<String>> = Mutex::new(None);
+
+async fn check_update(app: AppHandle) {
+    use tauri_plugin_updater::UpdaterExt;
+    let found = match app.updater() {
+        Ok(u) => u.check().await,
+        Err(e) => Err(e),
+    };
+    match found {
+        Ok(Some(update)) => {
+            *UPDATE.lock().unwrap() = Some(update.version.clone());
+            let _ = app.emit("update-available", update.version);
+        }
+        Ok(None) => {}
+        Err(e) => diag(&format!("update check: {e}")), // offline or no release yet: try again next start
+    }
+}
+
+#[tauri::command]
+fn update_available() -> Option<String> {
+    UPDATE.lock().unwrap().clone()
+}
+
+/// Downloads the new version and runs its installer (which closes Phrase X and starts the new one).
+#[tauri::command]
+async fn update_install(app: AppHandle) -> Res<()> {
+    use tauri_plugin_updater::UpdaterExt;
+    let update = app.updater().map_err(err)?.check().await.map_err(err)?.ok_or("no_update")?;
+    update.download_and_install(|_, _| {}, || {}).await.map_err(err)?;
+    app.restart();
+}
+
 // ---------- windows & tray ----------
 
 fn tr(lang: &str, key: &str) -> &'static str {
@@ -1663,6 +1698,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show_main(app)))
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -1703,7 +1739,7 @@ fn main() {
             settings, save_settings, running_apps, popup_insert, popup_hide, form_pending, form_submit,
             clips, clip_insert, clip_delete, clip_clear, clip_to_phrase, export_data, import_data, open_backups, install_autocorrect,
             trash, trash_restore, trash_delete, trash_clear, choice_pending, choice_pick, set_no_expand, set_recording_hotkey,
-            sync_status, sync_login, sync_cancel_login, sync_logout, sync_now
+            sync_status, sync_login, sync_cancel_login, sync_logout, sync_now, update_available, update_install
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -1757,6 +1793,8 @@ fn main() {
             std::thread::spawn(move || watch_clipboard(watcher));
             let syncer = app.handle().clone();
             std::thread::spawn(move || sync_loop(syncer));
+            let updater = app.handle().clone();
+            tauri::async_runtime::spawn(async move { check_update(updater).await });
 
             if !minimized {
                 show_main(app.handle());

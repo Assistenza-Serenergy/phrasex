@@ -12,7 +12,10 @@ timeout /t 1 /nobreak >nul
 goto wait
 :install
 del "%APPDATA%\PhraseX\quit-request" >nul 2>&1
-"C:\Users\Marco\Desktop\PhraseX\target\release\bundle\nsis\Phrase X_0.1.0_x64-setup.exe" /S
+rem newest installer, whatever the version
+set "nsis=%~dp0..\target\release\bundle\nsis"
+for /f "delims=" %%f in ('dir /b /o:d "%nsis%\*-setup.exe"') do set "setup=%nsis%\%%f"
+"%setup%" /S
 echo setup exit %errorlevel% > "%~dp0reinstall.log"
 ie4uinit.exe -ClearIconCache
 ie4uinit.exe -show

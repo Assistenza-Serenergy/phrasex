@@ -183,5 +183,8 @@
   "ctxPaste": "Incolla",
   "kbdNewFolder": "Ctrl+Maiusc+N",
   "folderColor": "Colore",
-  "folderColorDefault": "Giallo (predefinito)"
+  "folderColorDefault": "Giallo (predefinito)",
+  "update": "Aggiorna",
+  "updating": "Aggiornamento…",
+  "updateTitle": "Installa la versione {v}"
 }

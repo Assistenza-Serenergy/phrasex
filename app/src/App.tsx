@@ -83,6 +83,14 @@ export default function App() {
     return () => clearTimeout(id);
   }, [msg]);
   useEffect(() => void loadTrash(), []);
+  // a newer version on GitHub: one click installs it
+  const [update, setUpdate] = useState<string | null>(null);
+  const [updating, setUpdating] = useState(false);
+  useEffect(() => {
+    void api.updateAvailable().then(setUpdate).catch(() => {});
+    const un = listen<string>("update-available", (ev) => setUpdate(ev.payload));
+    return () => void un.then((f) => f());
+  }, []);
 
   async function refresh() {
     const l = await api.library();
@@ -774,6 +782,19 @@ export default function App() {
               <span>{loggingIn ? t("syncLoggingIn") : t("syncLogin")}</span>
             </button>
           )
+        ) : null}
+        {update ? (
+          <button
+            className="accent"
+            disabled={updating}
+            title={t("updateTitle", { v: update })}
+            onClick={() => {
+              setUpdating(true);
+              api.updateInstall().catch((e) => (setUpdating(false), fail(e)));
+            }}
+          >
+            {updating ? t("updating") : t("update")}
+          </button>
         ) : null}
         {lib?.paused ? <button className="paused-badge" onClick={togglePause} title={t("resume")}>{t("paused")}</button> : null}
         <button className={view === "settings" ? "on" : undefined} title={t("settings")} onClick={() => setView(view === "settings" ? "library" : "settings")}>

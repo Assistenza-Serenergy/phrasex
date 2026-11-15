@@ -183,5 +183,8 @@
   "ctxPaste": "Paste",
   "kbdNewFolder": "Ctrl+Shift+N",
   "folderColor": "Colour",
-  "folderColorDefault": "Yellow (default)"
+  "folderColorDefault": "Yellow (default)",
+  "update": "Update",
+  "updating": "Updating…",
+  "updateTitle": "Install version {v}"
 }
