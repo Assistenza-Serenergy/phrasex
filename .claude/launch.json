@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "shots",
+      "runtimeExecutable": "C:/Program Files/nodejs/node.exe",
+      "runtimeArgs": ["app/node_modules/vite/bin/vite.js", "app", "--config", "app/vite.shots.config.ts"],
+      "port": 1430
+    }
+  ]
+}

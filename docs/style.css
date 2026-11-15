@@ -9,3 +9,9 @@ a { color: inherit; }
 .muted { color: var(--muted); }
 nav { display: flex; gap: 1.25rem; flex-wrap: wrap; border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1rem; font-size: .95rem; }
 ul { padding-left: 1.2rem; }
+
+figure { margin: 1.5rem 0; }
+figure img { display: block; max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; }
+figcaption { margin-top: .4rem; font-size: .9rem; color: var(--muted); }
+.shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 1rem; }
+.shots figure { margin: 0; }
