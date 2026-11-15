@@ -2,6 +2,7 @@
 //! hotkey popup, fill-in forms, per-phrase hotkeys, settings.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod clipimg;
 mod cloud;
 
 use phrasex_engine::macros::{self, Action, Context, DateTime, Field, FieldKind};
@@ -131,6 +132,8 @@ struct Settings {
 struct ClipDto {
     id: i64,
     text: String,
+    /// data: URL of a copied picture ("" for text)
+    image: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -1209,7 +1212,17 @@ fn open_backups() {
 #[tauri::command]
 fn clips(state: State<AppState>) -> Res<Vec<ClipDto>> {
     let store = state.store.lock().unwrap();
-    Ok(store.clips().map_err(err)?.into_iter().map(|(id, text)| ClipDto { id, text }).collect())
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD;
+    Ok(store
+        .clips()
+        .map_err(err)?
+        .into_iter()
+        .map(|(id, text, image)| match image {
+            Some(png) => ClipDto { id, text: String::new(), image: format!("data:image/png;base64,{}", b64.encode(png)) },
+            None => ClipDto { id, text, image: String::new() },
+        })
+        .collect())
 }
 
 /// Pastes a history item as is (no macros) into the last used app.
@@ -1218,12 +1231,19 @@ fn clip_insert(app: AppHandle, state: State<AppState>, id: i64) {
     if let Some(w) = app.get_webview_window("popup") {
         let _ = w.hide();
     }
-    let text = state.store.lock().unwrap().clips().ok().and_then(|c| c.into_iter().find(|c| c.0 == id)).map(|c| c.1);
-    if let Some(text) = text {
+    let clip = state.store.lock().unwrap().clips().ok().and_then(|c| c.into_iter().find(|c| c.0 == id));
+    if let Some((_, text, image)) = clip {
         std::thread::spawn(move || {
             let _one_at_a_time = DELIVER.lock().unwrap_or_else(|p| p.into_inner());
             phrasex_listener::restore_focus();
-            phrasex_listener::inject(0, &text);
+            match image {
+                Some(png) => {
+                    if let Some(dib) = clipimg::png_to_dib(&png) {
+                        phrasex_listener::inject_image(&dib);
+                    }
+                }
+                None => phrasex_listener::inject(0, &text),
+            }
         });
     }
 }
@@ -1242,7 +1262,7 @@ fn clip_clear(state: State<AppState>) -> Res<()> {
 #[tauri::command]
 fn clip_to_phrase(app: AppHandle, state: State<AppState>, id: i64) -> Res<i64> {
     let store = state.store.lock().unwrap();
-    let text = store.clips().map_err(err)?.into_iter().find(|c| c.0 == id).map(|c| c.1).ok_or("not found")?;
+    let text = store.clips().map_err(err)?.into_iter().find(|c| c.0 == id && c.2.is_none()).map(|c| c.1).ok_or("not found")?;
     let name: String = text.lines().next().unwrap_or("").chars().take(40).collect();
     let new_id = store.save(&Entry::new(None, name.trim(), "", &text)).map_err(err)?;
     reload(&app, &store)?;
@@ -1523,8 +1543,17 @@ fn watch_clipboard(app: AppHandle) {
         seen = seq;
         let state = app.state::<AppState>();
         let enabled = state.store.lock().unwrap().setting("clip_history").ok().flatten().as_deref() != Some("off");
-        if let Some(text) = enabled.then(phrasex_listener::copied_text).flatten() {
+        if !enabled {
+            continue;
+        }
+        if let Some(text) = phrasex_listener::copied_text() {
             let _ = state.store.lock().unwrap().add_clip(&text);
+        } else if let Some(png) = phrasex_listener::copied_image().and_then(|dib| clipimg::dib_to_png(&dib)) {
+            use sha2::Digest;
+            let hash = sha2::Sha256::digest(&png);
+            // dedup key in the text column; the control character keeps it apart from any copied text
+            let key = format!("{}img:{}", char::from(1u8), hash[..8].iter().map(|b| format!("{b:02x}")).collect::<String>());
+            let _ = state.store.lock().unwrap().add_image_clip(&key, &png);
         }
     }
 }

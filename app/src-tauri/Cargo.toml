@@ -25,3 +25,4 @@ keyring = { version = "3", features = ["windows-native"] }
 sha2 = "0.10"
 base64 = "0.22"
 getrandom = "0.3"
+png = "0.18" # clipboard pictures (already built for Tauri's icons)

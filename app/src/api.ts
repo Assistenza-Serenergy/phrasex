@@ -32,7 +32,7 @@ export type Settings = {
   shareWith: string[];
 };
 export type SyncStatus = { configured: boolean; email: string; name: string; last: string; error: string; shareError: string };
-export type Clip = { id: number; text: string };
+export type Clip = { id: number; text: string; image: string }; // image = data: URL of a copied picture
 export type TrashItem = { id: number; label: string; isFolder: boolean; deletedAt: string };
 export type FormField = {
   label: string;

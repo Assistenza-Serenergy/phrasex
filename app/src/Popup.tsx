@@ -225,9 +225,9 @@ export function Popup() {
             ))
           : clipResults.map((c, i) => (
               <li key={c.id} role="option" aria-selected={i === current} className={i === current ? "active" : undefined} onMouseMove={() => i !== current && setIndex(i)} onClick={() => choose(i)}>
-                <div className="clip-text">{c.text}</div>
+                {c.image ? <img className="clip-img" src={c.image} alt="" /> : <div className="clip-text">{c.text}</div>}
                 <div className="clip-actions">
-                  <button type="button" onClick={(ev) => (ev.stopPropagation(), void api.clipToPhrase(c.id))}>{t("clipToPhrase")}</button>
+                  {c.image ? null : <button type="button" onClick={(ev) => (ev.stopPropagation(), void api.clipToPhrase(c.id))}>{t("clipToPhrase")}</button>}
                   <button type="button" onClick={(ev) => (ev.stopPropagation(), void deleteClip(c.id))}>{t("clipDelete")}</button>
                 </div>
               </li>

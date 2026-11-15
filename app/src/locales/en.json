@@ -80,7 +80,7 @@
   "clipDelete": "Delete",
   "clipClear": "Clear history",
   "settingsClipboard": "Clipboard",
-  "clipHistory": "Remember copied text (last 200)",
+  "clipHistory": "Remember copied text and images (last 200)",
   "clipHotkey": "Clipboard history shortcut",
   "settingsData": "Data",
   "exportData": "Export all phrases",

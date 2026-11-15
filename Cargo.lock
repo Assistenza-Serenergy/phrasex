@@ -2686,6 +2686,7 @@ dependencies = [
  "phrasex-engine",
  "phrasex-listener",
  "phrasex-store",
+ "png",
  "serde",
  "serde_json",
  "sha2",

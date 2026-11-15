@@ -449,6 +449,21 @@ const GDI_FORMATS: [u32; 8] = [2, 3, 9, 14, 0x80, 0x82, 0x83, 0x8E];
 
 /// Pastes `text` with Ctrl+V and then puts the user's clipboard back as it was.
 fn paste(text: &str) {
+    let utf16: Vec<u8> = text.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect();
+    paste_data(CF_UNICODETEXT as u32, &utf16);
+}
+
+/// Standard clipboard format: a device-independent bitmap (header + pixels) in memory.
+const CF_DIB: u32 = 8;
+
+/// Pastes a picture (CF_DIB bytes) into the focused app, then restores the clipboard.
+pub fn inject_image(dib: &[u8]) {
+    wait_modifiers_released();
+    paste_data(CF_DIB, dib);
+}
+
+/// Puts `bytes` on the clipboard as `fmt`, presses Ctrl+V, then puts the user's clipboard back.
+fn paste_data(fmt: u32, bytes: &[u8]) {
     let saved: Vec<(u32, Vec<u8>)> = with_clipboard(|| unsafe {
         let mut out = Vec::new();
         let mut fmt = EnumClipboardFormats(0);
@@ -468,10 +483,9 @@ fn paste(text: &str) {
     })
     .unwrap_or_default();
 
-    let utf16: Vec<u8> = text.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect();
     let ok = with_clipboard(|| unsafe {
         EmptyClipboard();
-        set_bytes(CF_UNICODETEXT as u32, &utf16);
+        set_bytes(fmt, bytes);
         exclude_from_history();
     });
     if ok.is_none() {
@@ -497,20 +511,41 @@ pub fn clipboard_sequence() -> u32 {
 /// Text the user just copied, for the clipboard history. `None` for our own pastes and for content
 /// marked private (password managers set the exclusion formats).
 pub fn copied_text() -> Option<String> {
-    if clipboard_sequence() == OWN_CLIP_SEQ.load(Relaxed) {
-        return None;
-    }
-    let private = ["ExcludeClipboardContentFromMonitorProcessing\0", "Clipboard Viewer Ignore\0"].iter().any(|name| unsafe {
-        let wide: Vec<u16> = name.encode_utf16().collect();
-        let fmt = RegisterClipboardFormatW(wide.as_ptr());
-        fmt != 0 && IsClipboardFormatAvailable(fmt) != 0
-    });
-    if private {
+    if not_for_history() {
         return None;
     }
     use phrasex_engine::macros::Context;
     let text = System.clipboard();
     (!text.trim().is_empty()).then_some(text)
+}
+
+/// True for our own pastes and for content marked private (password managers set the exclusion formats).
+fn not_for_history() -> bool {
+    clipboard_sequence() == OWN_CLIP_SEQ.load(Relaxed)
+        || ["ExcludeClipboardContentFromMonitorProcessing\0", "Clipboard Viewer Ignore\0"].iter().any(|name| unsafe {
+            let wide: Vec<u16> = name.encode_utf16().collect();
+            let fmt = RegisterClipboardFormatW(wide.as_ptr());
+            fmt != 0 && IsClipboardFormatAvailable(fmt) != 0
+        })
+}
+
+/// A picture the user just copied (CF_DIB bytes), when there is no text. Same exclusions as `copied_text`.
+pub fn copied_image() -> Option<Vec<u8>> {
+    if not_for_history() || unsafe { IsClipboardFormatAvailable(CF_UNICODETEXT as u32) } != 0 {
+        return None;
+    }
+    with_clipboard(|| unsafe {
+        let h = GetClipboardData(CF_DIB);
+        let size = if h.is_null() { 0 } else { GlobalSize(h) };
+        let p = if size == 0 { null_mut() } else { GlobalLock(h) };
+        if p.is_null() {
+            return None;
+        }
+        let out = std::slice::from_raw_parts(p as *const u8, size).to_vec();
+        GlobalUnlock(h);
+        Some(out)
+    })
+    .flatten()
 }
 
 unsafe fn set_bytes(fmt: u32, bytes: &[u8]) {

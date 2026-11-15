@@ -283,3 +283,4 @@ button.paused-badge { color: var(--danger); border-color: var(--danger); }
 .swatch { width: 24px; height: 24px; padding: 0; border-radius: 50%; background: var(--folder); border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--input-border); }
 .swatch:hover:not(:disabled) { background: var(--folder); filter: brightness(1.1); }
 .swatch.on { box-shadow: 0 0 0 2px var(--text); }
+.clip-img { display: block; max-width: 100%; max-height: 90px; border-radius: 4px; border: 1px solid var(--border); background: repeating-conic-gradient(var(--hover) 0 25%, transparent 0 50%) 0 0 / 12px 12px; }

@@ -8,7 +8,10 @@ pub use rusqlite::{Error, Result};
 pub mod sync;
 
 /// Schema migrations, applied in order; `PRAGMA user_version` = number applied.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11];
+
+/// Images in the clipboard history (PNG; `text` then holds a dedup key, see `add_image_clip`).
+const V11: &str = "ALTER TABLE clip ADD COLUMN image BLOB;";
 
 /// Folder colour (CSS hex like "#d64545"; NULL = default yellow).
 const V10: &str = "ALTER TABLE folder ADD COLUMN color TEXT;";
@@ -112,6 +115,8 @@ ALTER TABLE snippet ADD COLUMN uses INTEGER NOT NULL DEFAULT 0;
 
 /// How many clipboard items are kept.
 pub const CLIP_LIMIT: i64 = 200;
+/// How many of them may be images. ponytail: fixed; images are big (a screenshot ~0.5 MB).
+pub const IMAGE_CLIP_LIMIT: i64 = 20;
 
 const V2: &str = "
 ALTER TABLE snippet ADD COLUMN hotkey TEXT;
@@ -383,10 +388,24 @@ impl Store {
             .map(drop)
     }
 
-    /// (id, text), most recent first.
-    pub fn clips(&self) -> Result<Vec<(i64, String)>> {
-        let mut st = self.db.prepare("SELECT id, text FROM clip ORDER BY id DESC")?;
-        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    /// Remembers a copied image (PNG). `key` identifies the picture (e.g. its hash): copying it
+    /// again moves it to the top instead of adding a copy.
+    pub fn add_image_clip(&self, key: &str, png: &[u8]) -> Result<()> {
+        self.db.execute("DELETE FROM clip WHERE text = ?1", [key])?;
+        self.db.execute("INSERT INTO clip (text, image) VALUES (?1, ?2)", params![key, png])?;
+        self.db.execute(
+            "DELETE FROM clip WHERE image IS NOT NULL AND id NOT IN (SELECT id FROM clip WHERE image IS NOT NULL ORDER BY id DESC LIMIT ?1)",
+            [IMAGE_CLIP_LIMIT],
+        )?;
+        self.db
+            .execute("DELETE FROM clip WHERE id NOT IN (SELECT id FROM clip ORDER BY id DESC LIMIT ?1)", [CLIP_LIMIT])
+            .map(drop)
+    }
+
+    /// (id, text, PNG image), most recent first. Image items have a dedup key as text.
+    pub fn clips(&self) -> Result<Vec<(i64, String, Option<Vec<u8>>)>> {
+        let mut st = self.db.prepare("SELECT id, text, image FROM clip ORDER BY id DESC")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         rows.collect()
     }
 
@@ -648,6 +667,14 @@ mod tests {
             s.add_clip(&i.to_string()).unwrap();
         }
         assert_eq!(s.clips().unwrap().len() as i64, CLIP_LIMIT);
+        for i in 0..IMAGE_CLIP_LIMIT + 3 {
+            s.add_image_clip(&format!("img{i}"), &[1, 2, 3]).unwrap();
+        }
+        s.add_image_clip("img5", &[9]).unwrap(); // already gone: comes back on top
+        let all = s.clips().unwrap();
+        assert_eq!(all.iter().filter(|c| c.2.is_some()).count() as i64, IMAGE_CLIP_LIMIT);
+        assert_eq!(all[0].2.as_deref(), Some(&[9u8][..]));
+        assert_eq!(all.len() as i64, CLIP_LIMIT);
         s.clear_clips().unwrap();
         assert!(s.clips().unwrap().is_empty());
     }
