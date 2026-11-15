@@ -71,3 +71,30 @@ Open-source text expander (clean-room alternative to PhraseExpress) for X Holdin
   - Manual order (store V9 `snippet.position`, synced and copied into shares): drag a phrase onto the upper/lower half of another phrase of the same folder (drop line); moving a phrase to another folder resets its position; "Ordina A-Z" (folder editor button and folder/empty-area context menu) sets the folder's positions back to NULL = alphabetical.
   - Phrase X runs elevated, so computer use can't click in it (UIPI); settings can be changed from the user's Terminal panel with python + sqlite3 on %APPDATA%\PhraseX\phrasex.db (the app reads them on the next sync round).
   - Store V8: `shared` column (owner uid) on folder/snippet; tombstone triggers skip shared rows; sync_snapshot/apply_sync ignore them; `set_shared` replaces all shared rows (uids `s:{owner}[:{uid}]`, no hotkeys/tags). Backend guard `own_only` refuses edits of shared items and putting own items inside shared folders (the next refresh would delete them). UI: fieldset disabled + "Condivisa con te: sola lettura", no drag/menu on shared rows. Export skips shared. Sign-out clears shared copies.
+
+## Next work, approved by the user (2026-11-15) — do in this order, commit + push after each group
+Text (no AI slop, short, plain Italian):
+1. Cut long hints to half a line or move them to tooltips: run as admin, excluded programs, backup/CSV, sharing, folder shortcut, trash, "abbreviazione usata anche da…".
+2. Shorter settings headings ("Account Google e sincronizzazione" → "Account", "Aiuto alla scrittura" → "Correzioni"). Keep the button text "Accedi con Google" (user likes it).
+3. Short toasts ("Esportato", path only in a tooltip).
+4. One-line errors (e.g. Google Drive checkbox → "Spunta tutte le caselle di Google e riprova").
+Look & ease:
+5. Autosave like PhraseExpress: no "Salva" / "Modifiche non salvate" in the phrase editor, folder editor and Settings.
+6. NOT decided: Settings split into side tabs (Generale, Account e condivisione, Correzioni, Appunti, Programmi esclusi, Dati). The user didn't understand it: explain in one line and ask before doing it.
+7. REJECTED: keep Importa / Esporta in the toolbar; keep the toolbar sign-in button.
+8. Icons in one consistent style (same stroke/size), cleaner tree, quieter abbreviation chip.
+9. Same style for the search popup, the chooser menu and the fill-in form window.
+10. Check the light theme and contrasts (only dark was ever seen).
+11. In-app shortcuts: Ctrl+N new phrase, Ctrl+Shift+N new folder, Ctrl+F search, F2 rename, arrows + Enter in the tree. Hovering "Nuova frase" / "Nuova cartella" must show the shortcut in the tooltip.
+12. Copy/paste phrases and folders in the tree (Ctrl+C / Ctrl+V).
+17. Colour per folder.
+20. Images in the clipboard history.
+Distribution:
+23. Auto-update for colleagues via GitHub Releases (Tauri updater; publishing a release is outward-facing: ask the user before each one).
+24. Sync the settings between the user's PCs too.
+25. Nicer installer, with an installer logo: black box with white borders in the Phrase X style with the X inside (classic "installer box" look). Show a preview (scripts/icon-preview.py style) before building it.
+26. Update the website (docs/index.html) with real screenshots.
+Cleanup:
+27. Remove dead code: statistics, tags, the "after space" expansion mode option.
+28. Remove the debug log lines that are no longer needed ("login tab: …" etc.).
+Not now / no: 13 (PhraseExpress import: the user will ask to move phrases by hand later), 14, 15, 16, 18, 19, 21, 22.
