@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 /** shared = part of a library someone shared with this user (read-only). */
-export type Folder = { id: number; parentId: number | null; name: string; hotkey: string; shared: boolean };
+export type Folder = { id: number; parentId: number | null; name: string; hotkey: string; color: string; shared: boolean };
 export type Entry = {
   id: number;
   folderId: number | null;
@@ -50,6 +50,7 @@ export const api = {
   setFolderHotkey: (id: number, hotkey: string) => invoke<void>("set_folder_hotkey", { id, hotkey }),
   reorderEntries: (ids: number[]) => invoke<void>("reorder_entries", { ids }),
   sortFolder: (folderId: number | null) => invoke<void>("sort_folder", { folderId }),
+  setFolderColor: (id: number, color: string) => invoke<void>("set_folder_color", { id, color }),
   pasteItems: (folders: number[], entries: number[], target: number | null) => invoke<{ phrases: number; folders: number }>("paste_items", { folders, entries, target }),
   moveFolder: (id: number, parentId: number | null) => invoke<void>("move_folder", { id, parentId }),
   deleteFolder: (id: number) => invoke<void>("delete_folder", { id }),

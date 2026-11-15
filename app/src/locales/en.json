@@ -181,5 +181,7 @@
   "pasted": "Pasted",
   "ctxCopy": "Copy",
   "ctxPaste": "Paste",
-  "kbdNewFolder": "Ctrl+Shift+N"
+  "kbdNewFolder": "Ctrl+Shift+N",
+  "folderColor": "Colour",
+  "folderColorDefault": "Yellow (default)"
 }

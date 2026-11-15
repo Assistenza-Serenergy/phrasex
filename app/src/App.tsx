@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type Dispatch, type DragEvent, type HTMLAttributes, type MouseEvent, type RefObject, type SetStateAction } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type DragEvent, type HTMLAttributes, type MouseEvent, type RefObject, type SetStateAction } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, type Entry, type Folder, type Library, type Settings, type SyncStatus, type TrashItem } from "./api";
 import { errText, resolveLang, translator, type Key, type T } from "./i18n";
@@ -20,6 +20,9 @@ type MenuItem = [label: string, run: () => unknown, danger?: boolean] | null;
 /** Props spread on a tree row: drag source, drop target, context menu. */
 type RowAttrs = (item: Sel, dropFolder?: number | null) => HTMLAttributes<HTMLDivElement>;
 const DRAG_TYPE = "application/x-phrasex";
+/** Folder colours ("" = default yellow); mid tones that read on both themes. */
+const FOLDER_COLORS = ["", "#d64545", "#e8833a", "#3fa45b", "#2f7de1", "#8a5cd6", "#d14f9b", "#8a8a8a"];
+const tint = (color: string) => (color ? ({ "--folder": color } as CSSProperties) : undefined);
 
 const toDraft = ({ tags, ...rest }: Entry): Draft => ({ ...rest, tagsText: tags.join(", ") });
 const fromDraft = ({ tagsText, ...rest }: Draft): Entry => ({
@@ -906,6 +909,23 @@ export default function App() {
                 <span>{t("hotkey")}</span>
                 <HotkeyInput value={folderHotkey} placeholder={t("hotkeyHint")} onChange={setFolderHotkey} />
               </label>
+              <div className="field">
+                <span>{t("folderColor")}</span>
+                <div className="swatches" role="radiogroup" aria-label={t("folderColor")}>
+                  {FOLDER_COLORS.map((c) => (
+                    <button
+                      key={c || "default"}
+                      type="button"
+                      role="radio"
+                      aria-checked={selectedFolder.color === c}
+                      aria-label={c || t("folderColorDefault")}
+                      className={selectedFolder.color === c ? "swatch on" : "swatch"}
+                      style={tint(c)}
+                      onClick={() => void api.setFolderColor(selectedFolder.id, c).then(refresh).catch(fail)}
+                    />
+                  ))}
+                </div>
+              </div>
               <div className="row end">
                 {readOnly ? <span className="muted">{t("readOnly")}</span> : (
                   <>
@@ -1125,7 +1145,7 @@ function TreeFolder({ folder, depth, ...p }: TreeProps & { folder: Folder; depth
         <button className={open ? "chevron open" : "chevron"} aria-label={folder.name} aria-expanded={open} onClick={() => p.onToggle(folder.id)}>
           ›
         </button>
-        <button className="label" draggable={draggable} onClick={() => p.onSelect({ kind: "folder", id: folder.id })} onDoubleClick={() => p.onToggle(folder.id)}>
+        <button className="label" style={tint(folder.color)} draggable={draggable} onClick={() => p.onSelect({ kind: "folder", id: folder.id })} onDoubleClick={() => p.onToggle(folder.id)}>
           {FolderIcon}
           <span className="name">{folder.name}</span>
         </button>

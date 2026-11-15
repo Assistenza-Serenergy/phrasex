@@ -96,6 +96,7 @@ struct FolderDto {
     parent_id: Option<i64>,
     name: String,
     hotkey: String,
+    color: String,
     shared: bool,
 }
 
@@ -547,7 +548,7 @@ fn library(state: State<AppState>) -> Res<Library> {
     Ok(Library {
         folders: folders
             .into_iter()
-            .map(|f| FolderDto { shared: shared_folders.contains(&f.id), id: f.id, parent_id: f.parent_id, name: f.name, hotkey: f.hotkey.unwrap_or_default() })
+            .map(|f| FolderDto { shared: shared_folders.contains(&f.id), id: f.id, parent_id: f.parent_id, name: f.name, hotkey: f.hotkey.unwrap_or_default(), color: f.color.unwrap_or_default() })
             .collect(),
         entries: entries
             .into_iter()
@@ -604,6 +605,19 @@ fn reorder_entries(app: AppHandle, state: State<AppState>, ids: Vec<i64>) -> Res
     let mut store = state.store.lock().unwrap();
     own_only(&store, &ids, &[])?;
     store.reorder(&ids).map_err(err)?;
+    reload(&app, &store).map(drop)
+}
+
+/// Folder colour: a CSS hex colour, or empty for the default.
+#[tauri::command]
+fn set_folder_color(app: AppHandle, state: State<AppState>, id: i64, color: String) -> Res<()> {
+    let ok = color.is_empty() || (color.len() == 7 && color.starts_with('#') && color[1..].chars().all(|c| c.is_ascii_hexdigit()));
+    if !ok {
+        return Err("invalid_color".into());
+    }
+    let store = state.store.lock().unwrap();
+    own_only(&store, &[], &[Some(id)])?;
+    store.set_folder_color(id, (!color.is_empty()).then_some(color.as_str())).map_err(err)?;
     reload(&app, &store).map(drop)
 }
 
@@ -843,6 +857,8 @@ struct ExportFolder {
     name: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     hotkey: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    color: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -898,7 +914,7 @@ fn snapshot(store: &Store, folders: Vec<Folder>, entries: Vec<Entry>) -> Res<Exp
         version: 1,
         folders: folders
             .into_iter()
-            .map(|f| ExportFolder { id: f.id, parent_id: f.parent_id, name: f.name, hotkey: f.hotkey.unwrap_or_default() })
+            .map(|f| ExportFolder { id: f.id, parent_id: f.parent_id, name: f.name, hotkey: f.hotkey.unwrap_or_default(), color: f.color.unwrap_or_default() })
             .collect(),
         phrases: entries.into_iter().map(|e| to_dto(store, e, &uses)).collect::<Res<_>>()?,
     })
@@ -980,6 +996,9 @@ fn import_snapshot(store: &mut Store, report: &mut ImportReport, file: ExportFil
                     let id = store.add_folder(new_parent, &f.name).map_err(err)?;
                     if keep_hotkeys && !f.hotkey.is_empty() {
                         store.set_folder_hotkey(id, Some(&f.hotkey)).map_err(err)?;
+                    }
+                    if !f.color.is_empty() {
+                        store.set_folder_color(id, Some(&f.color)).map_err(err)?;
                     }
                     ids.insert(f.id, id);
                     report.folders += 1;
@@ -1651,7 +1670,7 @@ fn main() {
             recording: AtomicBool::new(false),
         })
         .invoke_handler(tauri::generate_handler![
-            library, save_entry, delete_entry, add_folder, rename_folder, set_folder_hotkey, reorder_entries, sort_folder, paste_items, move_folder, delete_folder, set_paused,
+            library, save_entry, delete_entry, add_folder, rename_folder, set_folder_hotkey, reorder_entries, sort_folder, paste_items, set_folder_color, move_folder, delete_folder, set_paused,
             settings, save_settings, running_apps, popup_insert, popup_hide, form_pending, form_submit,
             clips, clip_insert, clip_delete, clip_clear, clip_to_phrase, export_data, import_data, open_backups, install_autocorrect,
             trash, trash_restore, trash_delete, trash_clear, choice_pending, choice_pick, set_no_expand, set_recording_hotkey,

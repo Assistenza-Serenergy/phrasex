@@ -8,7 +8,10 @@ pub use rusqlite::{Error, Result};
 pub mod sync;
 
 /// Schema migrations, applied in order; `PRAGMA user_version` = number applied.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10];
+
+/// Folder colour (CSS hex like "#d64545"; NULL = default yellow).
+const V10: &str = "ALTER TABLE folder ADD COLUMN color TEXT;";
 
 /// Manual order of the phrases inside a folder (dragged by the user); NULL = alphabetical, after the placed ones.
 const V9: &str = "ALTER TABLE snippet ADD COLUMN position INTEGER;";
@@ -147,6 +150,7 @@ pub struct Folder {
     pub parent_id: Option<i64>,
     pub name: String,
     pub hotkey: Option<String>,
+    pub color: Option<String>,
 }
 
 /// A stored snippet. `id == 0` means "not saved yet".
@@ -263,6 +267,10 @@ impl Store {
         self.db.execute(&format!("UPDATE folder SET hotkey = ?2, updated_at = {NOW} WHERE id = ?1"), params![id, hotkey]).map(drop)
     }
 
+    pub fn set_folder_color(&self, id: i64, color: Option<&str>) -> Result<()> {
+        self.db.execute(&format!("UPDATE folder SET color = ?2, updated_at = {NOW} WHERE id = ?1"), params![id, color]).map(drop)
+    }
+
     /// Moves a folder under `parent` (None = top level). Refuses to move it inside itself.
     /// Returns false when the move would create a loop.
     pub fn move_folder(&self, id: i64, parent: Option<i64>) -> Result<bool> {
@@ -279,8 +287,8 @@ impl Store {
     }
 
     pub fn folders(&self) -> Result<Vec<Folder>> {
-        let mut st = self.db.prepare("SELECT id, parent_id, name, hotkey FROM folder ORDER BY name COLLATE NOCASE")?;
-        let rows = st.query_map([], |r| Ok(Folder { id: r.get(0)?, parent_id: r.get(1)?, name: r.get(2)?, hotkey: r.get(3)? }))?;
+        let mut st = self.db.prepare("SELECT id, parent_id, name, hotkey, color FROM folder ORDER BY name COLLATE NOCASE")?;
+        let rows = st.query_map([], |r| Ok(Folder { id: r.get(0)?, parent_id: r.get(1)?, name: r.get(2)?, hotkey: r.get(3)?, color: r.get(4)? }))?;
         rows.collect()
     }
 

@@ -24,6 +24,8 @@ pub struct SyncFolder {
     pub name: String,
     #[serde(default)] // documents written before folder shortcuts
     pub hotkey: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] // documents written before folder colours
+    pub color: Option<String>,
     pub updated_at: String,
 }
 
@@ -124,11 +126,11 @@ impl Store {
     /// The library as the sync document (local ids replaced by uids).
     pub fn sync_snapshot(&self) -> Result<Library> {
         let mut st = self.db.prepare(
-            "SELECT f.uid, p.uid, f.name, f.updated_at, f.hotkey FROM folder f LEFT JOIN folder p ON p.id = f.parent_id
+            "SELECT f.uid, p.uid, f.name, f.updated_at, f.hotkey, f.color FROM folder f LEFT JOIN folder p ON p.id = f.parent_id
              WHERE f.shared IS NULL ORDER BY f.uid",
         )?;
         let folders = st
-            .query_map([], |r| Ok(SyncFolder { uid: r.get(0)?, parent: r.get(1)?, name: r.get(2)?, updated_at: r.get(3)?, hotkey: r.get(4)? }))?
+            .query_map([], |r| Ok(SyncFolder { uid: r.get(0)?, parent: r.get(1)?, name: r.get(2)?, updated_at: r.get(3)?, hotkey: r.get(4)?, color: r.get(5)? }))?
             .collect::<Result<_>>()?;
         let mut st = self.db.prepare(
             "SELECT s.id, s.uid, f.uid, s.name, s.trigger, s.body, s.mode, s.case_sensitive, s.enabled, s.hotkey, s.updated_at, s.position
@@ -169,9 +171,9 @@ impl Store {
         let mut ids: HashMap<&str, i64> = HashMap::new();
         for f in &lib.folders {
             tx.execute(
-                "INSERT INTO folder (uid, name, updated_at, parent_id, hotkey) VALUES (?1, ?2, ?3, NULL, ?4)
-                 ON CONFLICT(uid) DO UPDATE SET name = ?2, updated_at = ?3, parent_id = NULL, hotkey = ?4",
-                params![f.uid, f.name, f.updated_at, f.hotkey],
+                "INSERT INTO folder (uid, name, updated_at, parent_id, hotkey, color) VALUES (?1, ?2, ?3, NULL, ?4, ?5)
+                 ON CONFLICT(uid) DO UPDATE SET name = ?2, updated_at = ?3, parent_id = NULL, hotkey = ?4, color = ?5",
+                params![f.uid, f.name, f.updated_at, f.hotkey, f.color],
             )?;
             ids.insert(&f.uid, tx.query_row("SELECT id FROM folder WHERE uid = ?1", [&f.uid], |r| r.get(0))?);
         }
@@ -217,17 +219,17 @@ impl Store {
         let tx = self.db.transaction()?;
         tx.execute_batch("DELETE FROM snippet WHERE shared IS NOT NULL; DELETE FROM folder WHERE shared IS NOT NULL;")?;
         for sh in shares {
-            let add_folder = |name: &str, uid: String| -> Result<i64> {
+            let add_folder = |name: &str, uid: String, color: Option<&str>| -> Result<i64> {
                 tx.execute(
-                    "INSERT INTO folder (parent_id, name, uid, updated_at, shared) VALUES (NULL, ?1, ?2, ?3, ?4)",
-                    params![name, uid, EPOCH, sh.owner],
+                    "INSERT INTO folder (parent_id, name, uid, updated_at, shared, color) VALUES (NULL, ?1, ?2, ?3, ?4, ?5)",
+                    params![name, uid, EPOCH, sh.owner, color],
                 )?;
                 Ok(tx.last_insert_rowid())
             };
-            let root = add_folder(&sh.name, format!("s:{}", sh.owner))?;
+            let root = add_folder(&sh.name, format!("s:{}", sh.owner), None)?;
             let mut ids: HashMap<&str, i64> = HashMap::new();
             for f in &sh.library.folders {
-                ids.insert(&f.uid, add_folder(&f.name, format!("s:{}:{}", sh.owner, f.uid))?);
+                ids.insert(&f.uid, add_folder(&f.name, format!("s:{}:{}", sh.owner, f.uid), f.color.as_deref())?);
             }
             for f in &sh.library.folders {
                 let parent = f.parent.as_deref().and_then(|p| ids.get(p)).copied().unwrap_or(root);
@@ -355,6 +357,7 @@ mod tests {
         let mut pc2 = Store::open_in_memory().unwrap();
         let f = pc1.add_folder(None, "Lavoro").unwrap();
         pc1.set_folder_hotkey(f, Some("Ctrl+Alt+L")).unwrap();
+        pc1.set_folder_color(f, Some("#2f7de1")).unwrap();
         let mut keep = Entry::new(Some(f), "keep", "k", "v1");
         keep.id = pc1.save(&keep).unwrap();
         let tags = pc1.save(&Entry::new(Some(f), "tagged", "t", "x")).unwrap();
@@ -368,6 +371,7 @@ mod tests {
         assert_eq!(pc2.tags(pc2.entries().unwrap().iter().find(|e| e.name == "tagged").unwrap().id).unwrap(), ["mail"]);
         assert_eq!(pc2.folders().unwrap()[0].name, "Lavoro");
         assert_eq!(pc2.folders().unwrap()[0].hotkey.as_deref(), Some("Ctrl+Alt+L"), "folder shortcut synced");
+        assert_eq!(pc2.folders().unwrap()[0].color.as_deref(), Some("#2f7de1"), "folder colour synced");
 
         // PC1 deletes "gone"; later PC2 edits "keep" and adds a phrase
         std::thread::sleep(std::time::Duration::from_millis(5));

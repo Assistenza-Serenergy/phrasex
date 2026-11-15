@@ -277,3 +277,9 @@ button.paused-badge { color: var(--danger); border-color: var(--danger); }
 .popup-preview { padding-left: 24px; }
 .chooser-title, .form-window h1 { font: 600 15px/1.2 var(--font); }
 .form-window { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; }
+
+/* folder colour picker */
+.swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+.swatch { width: 24px; height: 24px; padding: 0; border-radius: 50%; background: var(--folder); border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--input-border); }
+.swatch:hover:not(:disabled) { background: var(--folder); filter: brightness(1.1); }
+.swatch.on { box-shadow: 0 0 0 2px var(--text); }

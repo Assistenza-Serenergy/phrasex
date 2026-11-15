@@ -181,5 +181,7 @@
   "pasted": "Incollato",
   "ctxCopy": "Copia",
   "ctxPaste": "Incolla",
-  "kbdNewFolder": "Ctrl+Maiusc+N"
+  "kbdNewFolder": "Ctrl+Maiusc+N",
+  "folderColor": "Colore",
+  "folderColorDefault": "Giallo (predefinito)"
 }
