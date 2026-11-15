@@ -345,7 +345,7 @@ fn share_round(app: &AppHandle) -> Res<()> {
         let get = |k: &str| store.setting(k).ok().flatten().unwrap_or_default();
         (emails(&get("share_with")), store.sync_snapshot().map_err(err)?, get("share_published"), get("share_received"))
     };
-    let lib = phrasex_store::sync::Library { tombstones: vec![], ..lib };
+    let lib = phrasex_store::sync::Library { tombstones: vec![], settings: None, ..lib }; // readers get phrases only
     let stamp = if readers.is_empty() { String::new() } else { cloud::fingerprint(&serde_json::to_string(&(&readers, &lib, &sharing.name)).map_err(err)?) };
     if stamp != published {
         sharing.publish(&readers, &lib)?;
@@ -731,6 +731,7 @@ fn save_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> 
     }
     let apps: Vec<String> = settings.excluded_apps.iter().map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect();
     store.set_setting("excluded_apps", &apps.join("\n")).map_err(err)?;
+    store.touch_settings().map_err(err)?; // goes to the user's other PCs on the next sync round
     let auto = app.autolaunch();
     let _ = if settings.autostart { auto.enable() } else { auto.disable() };
     let was_admin = store.setting("run_as_admin").ok().flatten().as_deref() == Some("on");

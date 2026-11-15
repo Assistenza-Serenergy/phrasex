@@ -117,7 +117,10 @@ export default function App() {
     const unPaused = listen<boolean>("paused", (ev) => setLib((l) => l && { ...l, paused: ev.payload }));
     const unSettings = listen("open-settings", () => setView("settings"));
     // Cloud sync brought changes from another PC.
-    const unSynced = listen("library-changed", () => void api.library().then(setLib).catch(() => {}));
+    const unSynced = listen("library-changed", () => {
+      void api.library().then(setLib).catch(() => {});
+      void api.settings().then(setSettings).catch(() => {}); // settings travel with the library
+    });
     // A clipboard item turned into a phrase from the popup: show it in the editor.
     const unEntry = listen<number>("open-entry", async (ev) => {
       const l = await api.library();

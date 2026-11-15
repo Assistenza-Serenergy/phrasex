@@ -1,7 +1,7 @@
 //! Cloud sync data: the whole library as one document keyed by stable uids, merged per item
 //! (the most recent edit wins, deletions travel as tombstones).
 
-use super::{creates_loop, write_tags, Store};
+use super::{creates_loop, write_tags, Store, NOW};
 use rusqlite::{params, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -15,6 +15,21 @@ pub struct Library {
     pub folders: Vec<SyncFolder>,
     pub snippets: Vec<SyncSnippet>,
     pub tombstones: Vec<Tombstone>,
+    /// The user's preferences (absent until changed once on some PC); newest wins as a whole.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settings: Option<SyncSettings>,
+}
+
+/// Settings that follow the user to every PC. Machine-specific ones (autostart, run as admin) stay local.
+pub const SYNCED_SETTINGS: &[&str] =
+    &["lang", "popup_hotkey", "clip_hotkey", "clip_history", "fix_double_caps", "capitalize_sentences", "popup_sort", "share_with", "excluded_apps"];
+/// Local setting holding when the synced settings were last changed (the sync clock).
+pub const SETTINGS_STAMP: &str = "settings_updated_at";
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct SyncSettings {
+    pub values: BTreeMap<String, String>,
+    pub updated_at: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -94,7 +109,11 @@ pub fn merge(a: &Library, b: &Library) -> Library {
     let folders = newest(&a.folders, &b.folders, &mut tombs);
     let snippets = newest(&a.snippets, &b.snippets, &mut tombs);
     let tombstones = tombs.into_iter().map(|(uid, deleted_at)| Tombstone { uid, deleted_at }).collect();
-    Library { folders, snippets, tombstones }
+    let settings = match (&a.settings, &b.settings) {
+        (Some(x), Some(y)) if y.updated_at > x.updated_at => Some(y.clone()),
+        (x, y) => x.clone().or_else(|| y.clone()),
+    };
+    Library { folders, snippets, tombstones, settings }
 }
 
 fn newest<T: Stamped + Clone>(a: &[T], b: &[T], tombs: &mut BTreeMap<String, String>) -> Vec<T> {
@@ -161,13 +180,42 @@ impl Store {
         let mut st = self.db.prepare("SELECT uid, deleted_at FROM tombstone ORDER BY uid")?;
         let tombstones =
             st.query_map([], |r| Ok(Tombstone { uid: r.get(0)?, deleted_at: r.get(1)? }))?.collect::<Result<_>>()?;
-        Ok(Library { folders, snippets, tombstones })
+        let settings = match self.setting(SETTINGS_STAMP)? {
+            Some(updated_at) if !updated_at.is_empty() => {
+                let mut values = BTreeMap::new();
+                for k in SYNCED_SETTINGS {
+                    if let Some(v) = self.setting(k)? {
+                        values.insert(k.to_string(), v);
+                    }
+                }
+                Some(SyncSettings { values, updated_at })
+            }
+            _ => None,
+        };
+        Ok(Library { folders, snippets, tombstones, settings })
+    }
+
+    /// Marks the synced settings as changed now (call after the user saves Settings).
+    pub fn touch_settings(&self) -> Result<()> {
+        self.db
+            .execute(
+                &format!("INSERT INTO setting (key, value) VALUES (?1, {NOW}) ON CONFLICT(key) DO UPDATE SET value = {NOW}"),
+                [SETTINGS_STAMP],
+            )
+            .map(drop)
     }
 
     /// Makes the local library exactly `lib` (one transaction). Keeps local usage counts.
     /// Parents that are gone, or that would make a loop, put the item at the top level.
     pub fn apply_sync(&mut self, lib: &Library) -> Result<()> {
         let tx = self.db.transaction()?;
+        if let Some(s) = &lib.settings {
+            let set = "INSERT INTO setting (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2";
+            for (k, v) in s.values.iter().filter(|(k, _)| SYNCED_SETTINGS.contains(&k.as_str())) {
+                tx.execute(set, [k, v])?;
+            }
+            tx.execute(set, [SETTINGS_STAMP, &s.updated_at])?;
+        }
         let mut ids: HashMap<&str, i64> = HashMap::new();
         for f in &lib.folders {
             tx.execute(
@@ -349,6 +397,28 @@ mod tests {
         me.set_shared(&[]).unwrap();
         assert_eq!((me.entries().unwrap().len(), me.folders().unwrap().len()), (1, 0));
         assert!(me.sync_snapshot().unwrap().tombstones.is_empty());
+    }
+
+    #[test]
+    fn settings_follow_the_user_newest_wins() {
+        let mut pc1 = Store::open_in_memory().unwrap();
+        let mut pc2 = Store::open_in_memory().unwrap();
+        pc2.set_setting("run_as_admin", "on").unwrap();
+        assert!(pc1.sync_snapshot().unwrap().settings.is_none(), "never changed: nothing to send");
+        pc1.set_setting("lang", "en").unwrap();
+        pc1.set_setting("run_as_admin", "off").unwrap(); // machine-specific: stays on pc1
+        pc1.touch_settings().unwrap();
+        let cloud = merge(&pc1.sync_snapshot().unwrap(), &Library::default());
+        pc2.apply_sync(&merge(&pc2.sync_snapshot().unwrap(), &cloud)).unwrap();
+        assert_eq!(pc2.setting("lang").unwrap().as_deref(), Some("en"));
+        assert_eq!(pc2.setting("run_as_admin").unwrap().as_deref(), Some("on"));
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        pc2.set_setting("lang", "it").unwrap();
+        pc2.touch_settings().unwrap();
+        let cloud = merge(&pc2.sync_snapshot().unwrap(), &cloud);
+        pc1.apply_sync(&merge(&pc1.sync_snapshot().unwrap(), &cloud)).unwrap();
+        assert_eq!(pc1.setting("lang").unwrap().as_deref(), Some("it"), "the newer change wins");
     }
 
     #[test]
