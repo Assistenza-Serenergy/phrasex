@@ -497,7 +497,7 @@ impl Store {
         Ok(self
             .entries()?
             .into_iter()
-            .filter(|e| e.enabled)
+            .filter(|e| e.enabled && !e.body.is_empty()) // an empty phrase would only erase the abbreviation
             .filter_map(|e| {
                 Some(Snippet { id: e.id, trigger: e.trigger?, body: e.body, mode: e.mode, case_sensitive: e.case_sensitive })
             })
@@ -548,15 +548,16 @@ mod tests {
         s.save(&e).unwrap();
         s.save(&Entry::new(Some(f), "Solo menu", "", "x")).unwrap();
         s.save(&Entry { enabled: false, ..Entry::new(None, "Spento", "off", "x") }).unwrap();
+        s.save(&Entry::new(None, "Vuota", "empty", "")).unwrap(); // no text yet: never expands
 
-        assert_eq!(s.entries().unwrap().len(), 3);
+        assert_eq!(s.entries().unwrap().len(), 4);
         assert_eq!(s.entries().unwrap()[0], e);
         let snippets = s.engine_snippets().unwrap();
         assert_eq!(snippets.len(), 1);
         assert_eq!((snippets[0].trigger.as_str(), snippets[0].mode), ("ciao", Mode::Immediate));
 
         s.delete(e.id).unwrap();
-        assert_eq!(s.entries().unwrap().len(), 2);
+        assert_eq!(s.entries().unwrap().len(), 3);
     }
 
     #[test]
