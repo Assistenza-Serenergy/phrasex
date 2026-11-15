@@ -2,7 +2,7 @@
 const q = new URLSearchParams(location.search);
 const F = (id: number, parentId: number | null, name: string, color = "", hotkey = "") => ({ id, parentId, name, hotkey, color, shared: false });
 const E = (id: number, folderId: number | null, name: string, trigger: string, body: string, uses = 0) => ({
-  id, folderId, name, trigger, body, immediate: true, caseSensitive: false, enabled: true, hotkey: "", tags: [], uses, shared: false,
+  id, folderId, name, trigger, body, immediate: true, caseSensitive: false, enabled: true, hotkey: "", color: id === 15 || id === 16 ? "folder" : "", uses, shared: false,
 });
 const library = {
   paused: false,
@@ -20,7 +20,7 @@ const library = {
 };
 const settings = {
   lang: "it", popupHotkey: "Ctrl+Space", clipHotkey: "Ctrl+Shift+V", autostart: true, runAsAdmin: false, excludedApps: ["keepass.exe"],
-  clipHistory: true, fixDoubleCaps: true, capitalizeSentences: false, popupSort: "uses", shareWith: ["collega@x-holding.it"],
+  clipHistory: true, fixDoubleCaps: true, capitalizeSentences: false, popupSort: "uses", theme: "system", shareWith: ["collega@x-holding.it"],
 };
 const answers: Record<string, unknown> = {
   library, settings,

@@ -89,6 +89,13 @@ Open-source text expander (clean-room alternative to PhraseExpress) for X Holdin
 - Python edit scripts in Git Bash: backslashes inside heredocs get mangled; write the script to the scratchpad with the Write tool instead.
 - Privacy page: mentions settings on Drive; it does NOT mention Firebase sharing yet (ask the user).
 
+## Later on 2026-11-15 (user feedback)
+- Folder editor: Delete folder button, white + any colour (native `<input type="color">` = Windows dialog), shortcut label says it works for every phrase of the folder and subfolders; "Applica a tutto il contenuto" (`apply_folder_color`: subfolders take the colour, phrases get "folder").
+- Phrase colour: store V13 `snippet.color` ("" grey, "folder" = same as its folder, or hex), synced/shared/exported; "Come la cartella" checkbox in the editor; tree icon via `--phrase`.
+- Theme setting (system/light/dark, synced): `data-theme` on <html> + window `setTheme` (capability core:window:allow-set-theme), `app/src/theme.ts`.
+- Sentence capital: the keyboard hook swallows the key and types the capital (`CAPITAL_NEXT`, set by run_engine from `Engine::capital_next`). Erasing + retyping raced with fast typing ("cCiao").
+- Phrase context menu says "Nuova frase".
+
 ## Still open
 - 23: release v0.2.0 published 2026-11-15 (user said yes): https://github.com/Assistenza-Serenergy/phrasex/releases/tag/v0.2.0. Colleagues install 0.2.0 by hand once; later versions update themselves (bump the version, build, ask, release).
 - Not now / no: 13 (PhraseExpress import), 14, 15, 16, 18, 19, 21, 22.

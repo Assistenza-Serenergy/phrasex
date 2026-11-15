@@ -8,7 +8,10 @@ pub use rusqlite::{Error, Result};
 pub mod sync;
 
 /// Schema migrations, applied in order; `PRAGMA user_version` = number applied.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13];
+
+/// Phrase icon colour: NULL = default grey, "folder" = same as its folder, or a CSS hex colour.
+const V13: &str = "ALTER TABLE snippet ADD COLUMN color TEXT;";
 
 /// Tags are gone (unused since the editor dropped the field).
 const V12: &str = "DROP TABLE snippet_tag; DROP TABLE tag;";
@@ -174,6 +177,8 @@ pub struct Entry {
     pub enabled: bool,
     /// Global shortcut that inserts this snippet, e.g. "Ctrl+Shift+F".
     pub hotkey: Option<String>,
+    /// Icon colour: None = default, "folder" = same as its folder, or "#rrggbb".
+    pub color: Option<String>,
 }
 
 impl Entry {
@@ -188,6 +193,7 @@ impl Entry {
             case_sensitive: false,
             enabled: true,
             hotkey: None,
+            color: None,
         }
     }
 }
@@ -279,6 +285,10 @@ impl Store {
         self.db.execute(&format!("UPDATE folder SET color = ?2, updated_at = {NOW} WHERE id = ?1"), params![id, color]).map(drop)
     }
 
+    pub fn set_entry_color(&self, id: i64, color: Option<&str>) -> Result<()> {
+        self.db.execute(&format!("UPDATE snippet SET color = ?2, updated_at = {NOW} WHERE id = ?1"), params![id, color]).map(drop)
+    }
+
     /// Moves a folder under `parent` (None = top level). Refuses to move it inside itself.
     /// Returns false when the move would create a loop.
     pub fn move_folder(&self, id: i64, parent: Option<i64>) -> Result<bool> {
@@ -306,12 +316,12 @@ impl Store {
             Mode::WordEnd => "word",
             Mode::Immediate => "immediate",
         };
-        let p = params![e.folder_id, e.name, e.trigger, e.body, mode, e.case_sensitive, e.enabled, e.hotkey];
+        let p = params![e.folder_id, e.name, e.trigger, e.body, mode, e.case_sensitive, e.enabled, e.hotkey, e.color];
         if e.id == 0 {
             self.db.execute(
                 &format!(
-                    "INSERT INTO snippet (folder_id, name, trigger, body, mode, case_sensitive, enabled, hotkey, uid, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, {NEW_UID}, {NOW})"
+                    "INSERT INTO snippet (folder_id, name, trigger, body, mode, case_sensitive, enabled, hotkey, color, uid, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, {NEW_UID}, {NOW})"
                 ),
                 p,
             )?;
@@ -320,10 +330,10 @@ impl Store {
         self.db.execute(
             &format!(
                 "UPDATE snippet SET folder_id = ?1, name = ?2, trigger = ?3, body = ?4, mode = ?5,
-                 case_sensitive = ?6, enabled = ?7, hotkey = ?8, updated_at = {NOW},
+                 case_sensitive = ?6, enabled = ?7, hotkey = ?8, color = ?10, updated_at = {NOW},
                  position = CASE WHEN folder_id IS ?1 THEN position END WHERE id = ?9"
             ),
-            params![e.folder_id, e.name, e.trigger, e.body, mode, e.case_sensitive, e.enabled, e.hotkey, e.id],
+            params![e.folder_id, e.name, e.trigger, e.body, mode, e.case_sensitive, e.enabled, e.hotkey, e.id, e.color],
         )?;
         Ok(e.id)
     }
@@ -353,7 +363,7 @@ impl Store {
 
     pub fn entries(&self) -> Result<Vec<Entry>> {
         let mut st = self.db.prepare(
-            "SELECT id, folder_id, name, trigger, body, mode, case_sensitive, enabled, hotkey
+            "SELECT id, folder_id, name, trigger, body, mode, case_sensitive, enabled, hotkey, color
              FROM snippet ORDER BY position IS NULL, position, name COLLATE NOCASE",
         )?;
         let rows = st.query_map([], entry)?;
@@ -507,6 +517,7 @@ fn entry(r: &Row) -> Result<Entry> {
         case_sensitive: r.get(6)?,
         enabled: r.get(7)?,
         hotkey: r.get(8)?,
+        color: r.get(9)?,
     })
 }
 

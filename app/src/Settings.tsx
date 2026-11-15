@@ -198,7 +198,14 @@ export function SettingsView({ initial, onSaved, onImported, t }: { initial: Set
                   <option value="tree">{t("popupSortTree")}</option>
                 </select>
               </label>
-              <span className="field" />
+              <label className="field">
+                <span>{t("theme")}</span>
+                <select value={s.theme} onChange={(e) => setS({ ...s, theme: e.target.value as Settings["theme"] })}>
+                  <option value="system">{t("themeSystem")}</option>
+                  <option value="light">{t("themeLight")}</option>
+                  <option value="dark">{t("themeDark")}</option>
+                </select>
+              </label>
             </div>
             <label className="check">
               <input type="checkbox" checked={s.autostart} onChange={(e) => setS({ ...s, autostart: e.target.checked })} />

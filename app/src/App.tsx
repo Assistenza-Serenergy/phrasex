@@ -5,6 +5,7 @@ import { errText, resolveLang, translator, type Key, type T } from "./i18n";
 import { HotkeyInput } from "./HotkeyInput";
 import { exportLibrary, importPicked, IMPORT_ACCEPT, SettingsView } from "./Settings";
 import logo from "../src-tauri/icons/icon.png";
+import { applyTheme } from "./theme";
 import { AccountIcon, ExportIcon, FolderIcon, GearIcon, ImportIcon, PhraseIcon, TrashIcon } from "./icons";
 
 type Sel = { kind: "folder" | "entry"; id: number } | null;
@@ -21,8 +22,26 @@ type MenuItem = [label: string, run: () => unknown, danger?: boolean] | null;
 type RowAttrs = (item: Sel, dropFolder?: number | null) => HTMLAttributes<HTMLDivElement>;
 const DRAG_TYPE = "application/x-phrasex";
 /** Folder colours ("" = default yellow); mid tones that read on both themes. */
-const FOLDER_COLORS = ["", "#d64545", "#e8833a", "#3fa45b", "#2f7de1", "#8a5cd6", "#d14f9b", "#8a8a8a", "#ffffff"];
+const PALETTE = ["#d64545", "#e8833a", "#3fa45b", "#2f7de1", "#8a5cd6", "#d14f9b", "#8a8a8a", "#ffffff"];
 const tint = (color: string) => (color ? ({ "--folder": color } as CSSProperties) : undefined);
+
+/** Swatches (special ones first: [value, css colour, label]), the palette, then any colour via the Windows dialog. */
+function ColorPicker({ value, special, onChange, t }: { value: string; special: [string, string, string][]; onChange: (c: string) => void; t: T }) {
+  const custom = ![...special.map((s) => s[0]), ...PALETTE].includes(value);
+  const swatch = (c: string, bg: string, label: string) => (
+    <button key={c || "default"} type="button" role="radio" aria-checked={value === c} aria-label={label} title={label}
+      className={value === c ? "swatch on" : "swatch"} style={{ background: bg }} onClick={() => onChange(c)} />
+  );
+  return (
+    <div className="swatches" role="radiogroup">
+      {special.map(([c, bg, label]) => swatch(c, bg, label))}
+      {PALETTE.map((c) => swatch(c, c, c))}
+      <label className={custom ? "swatch custom on" : "swatch custom"} title={t("folderColorCustom")} style={custom ? { background: value } : undefined}>
+        <input type="color" aria-label={t("folderColorCustom")} value={custom ? value : "#e0a526"} onChange={(e) => onChange(e.target.value)} />
+      </label>
+    </div>
+  );
+}
 
 const toDraft = (e: Entry): Draft => ({ ...e });
 const fromDraft = (d: Draft): Entry => d;
@@ -80,6 +99,7 @@ export default function App() {
     return () => clearTimeout(id);
   }, [msg]);
   useEffect(() => void loadTrash(), []);
+  useEffect(() => applyTheme(settings?.theme), [settings?.theme]);
   // a newer version on GitHub: one click installs it
   const [update, setUpdate] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
@@ -299,7 +319,7 @@ export default function App() {
     try {
       const id = await api.saveEntry({
         id: 0, folderId, name: t("newEntry"), trigger: "", body: "",
-        immediate: true, caseSensitive: false, enabled: true, hotkey: "", uses: 0, shared: false, // user: always expand right away
+        immediate: true, caseSensitive: false, enabled: true, hotkey: "", color: "", uses: 0, shared: false, // user: always expand right away
       });
       expand(folderId);
       applySelection({ kind: "entry", id }, await refresh());
@@ -726,7 +746,14 @@ export default function App() {
     });
   }
 
-  const treeProps = { tree, collapsed, isSel, onSelect: select, onToggle: toggleFolder, row: rowAttrs, dropKey, t };
+  /** CSS colour of a folder's icon ("" stored = default yellow). */
+  function folderColor(id: number | null) {
+    const f = id === null ? undefined : lib?.folders.find((x) => x.id === id);
+    return f?.color || "var(--folder)";
+  }
+  /** Phrase icon colour: its own, its folder's ("folder"), or none (default grey). */
+  const phraseColor = (e: Entry) => (e.color === "folder" ? (e.folderId === null ? "" : folderColor(e.folderId)) : e.color);
+  const treeProps = { tree, collapsed, isSel, onSelect: select, onToggle: toggleFolder, row: rowAttrs, dropKey, phraseColor, t };
   const group = topLevel(multi);
   const groupTarget = moveTarget === "" ? null : Number(moveTarget);
 
@@ -853,7 +880,7 @@ export default function App() {
             results.folders.length || results.entries.length ? (
               <>
                 {results.folders.map((f) => <TreeFolder key={f.id} folder={f} depth={0} {...treeProps} />)}
-                {results.entries.map((e) => <EntryRow key={e.id} entry={e} depth={0} selected={isSel("entry", e.id)} onSelect={select} attrs={rowAttrs({ kind: "entry", id: e.id })} t={t} />)}
+                {results.entries.map((e) => <EntryRow key={e.id} entry={e} depth={0} selected={isSel("entry", e.id)} onSelect={select} attrs={rowAttrs({ kind: "entry", id: e.id })} color={phraseColor(e)} t={t} />)}
               </>
             ) : (
               <p className="muted pad">{t("noResults")}</p>
@@ -862,7 +889,7 @@ export default function App() {
             <>
               {(tree.folders.get(null) ?? []).map((f) => <TreeFolder key={f.id} folder={f} depth={0} {...treeProps} />)}
               {(tree.entries.get(null) ?? []).map((e) => (
-                <EntryRow key={e.id} entry={e} depth={0} selected={isSel("entry", e.id)} onSelect={select} attrs={rowAttrs({ kind: "entry", id: e.id }, null)} drop={dropSide(dropKey, e.id)} t={t} />
+                <EntryRow key={e.id} entry={e} depth={0} selected={isSel("entry", e.id)} onSelect={select} attrs={rowAttrs({ kind: "entry", id: e.id }, null)} drop={dropSide(dropKey, e.id)} color={phraseColor(e)} t={t} />
               ))}
               <TrashNode
                 items={trash}
@@ -918,7 +945,7 @@ export default function App() {
               </div>
             </div>
           ) : draft ? (
-            <Editor draft={draft} setDraft={setDraft} folderOptions={folderOptions} readOnly={readOnly} nameRef={nameRef} entries={lib?.entries ?? []} t={t} />
+            <Editor draft={draft} setDraft={setDraft} folderOptions={folderOptions} folderColor={folderColor(draft.folderId)} readOnly={readOnly} nameRef={nameRef} entries={lib?.entries ?? []} t={t} />
           ) : selectedFolder ? (
             <form className="editor" onSubmit={(e) => e.preventDefault()}>
               <fieldset className="contents" disabled={readOnly}>
@@ -926,38 +953,23 @@ export default function App() {
                 <span>{t("folderName")}</span>
                 <input ref={nameRef} value={folderName} onChange={(e) => setFolderName(e.target.value)} />
               </label>
-              <label className="field" title={t("folderHotkeyTip")}>
-                <span>{t("hotkey")}</span>
+              <label className="field">
+                <span>{t("folderHotkey")}</span>
                 <HotkeyInput value={folderHotkey} placeholder={t("hotkeyHint")} onChange={setFolderHotkey} />
               </label>
+              <p className="muted field-note">{t("folderHotkeyTip")}</p>
               <div className="field">
                 <span>{t("folderColor")}</span>
-                <div className="swatches" role="radiogroup" aria-label={t("folderColor")}>
-                  {FOLDER_COLORS.map((c) => (
-                    <button
-                      key={c || "default"}
-                      type="button"
-                      role="radio"
-                      aria-checked={selectedFolder.color === c}
-                      aria-label={c || t("folderColorDefault")}
-                      className={selectedFolder.color === c ? "swatch on" : "swatch"}
-                      style={tint(c)}
-                      onClick={() => void api.setFolderColor(selectedFolder.id, c).then(refresh).catch(fail)}
-                    />
-                  ))}
-                  {/* any colour: the Windows colour dialog */}
-                  <label
-                    className={FOLDER_COLORS.includes(selectedFolder.color) ? "swatch custom" : "swatch custom on"}
-                    title={t("folderColorCustom")}
-                    style={FOLDER_COLORS.includes(selectedFolder.color) ? undefined : tint(selectedFolder.color)}
-                  >
-                    <input
-                      type="color"
-                      aria-label={t("folderColorCustom")}
-                      value={selectedFolder.color || "#e0a526"}
-                      onChange={(e) => void api.setFolderColor(selectedFolder.id, e.target.value).then(refresh).catch(fail)}
-                    />
-                  </label>
+                <div className="row">
+                  <ColorPicker
+                    value={selectedFolder.color}
+                    special={[["", "var(--folder)", t("folderColorDefault")]]}
+                    onChange={(c) => void api.setFolderColor(selectedFolder.id, c).then(refresh).catch(fail)}
+                    t={t}
+                  />
+                  <button type="button" title={t("applyColorTip")} onClick={() => void api.applyFolderColor(selectedFolder.id).then(refresh).then(() => setMsg({ text: t("colorApplied"), error: false })).catch(fail)}>
+                    {t("applyColor")}
+                  </button>
                 </div>
               </div>
               <div className="row end">
@@ -999,6 +1011,7 @@ type TreeProps = {
   onToggle: (id: number) => void;
   row: RowAttrs;
   dropKey: string | null;
+  phraseColor: (e: Entry) => string;
   t: T;
 };
 
@@ -1191,7 +1204,7 @@ function TreeFolder({ folder, depth, ...p }: TreeProps & { folder: Folder; depth
         <>
           {(p.tree.folders.get(folder.id) ?? []).map((f) => <TreeFolder key={f.id} folder={f} depth={depth + 1} {...p} />)}
           {(p.tree.entries.get(folder.id) ?? []).map((e) => (
-            <EntryRow key={e.id} entry={e} depth={depth + 1} selected={p.isSel("entry", e.id)} onSelect={p.onSelect} attrs={p.row({ kind: "entry", id: e.id }, folder.id)} drop={dropSide(p.dropKey, e.id)} t={p.t} />
+            <EntryRow key={e.id} entry={e} depth={depth + 1} selected={p.isSel("entry", e.id)} onSelect={p.onSelect} attrs={p.row({ kind: "entry", id: e.id }, folder.id)} drop={dropSide(p.dropKey, e.id)} color={p.phraseColor(e)} t={p.t} />
           ))}
         </>
       ) : null}
@@ -1199,18 +1212,18 @@ function TreeFolder({ folder, depth, ...p }: TreeProps & { folder: Folder; depth
   );
 }
 
-type EntryRowProps = { entry: Entry; depth: number; selected: boolean; onSelect: (s: Sel) => void; attrs: HTMLAttributes<HTMLDivElement>; drop?: string; t: T };
+type EntryRowProps = { entry: Entry; depth: number; selected: boolean; onSelect: (s: Sel) => void; attrs: HTMLAttributes<HTMLDivElement>; drop?: string; color: string; t: T };
 
 /** "drop-before" / "drop-after" while a phrase is dragged over this one (manual order). */
 const dropSide = (dropKey: string | null, id: number) =>
   dropKey === `b${id}` ? "drop-before" : dropKey === `a${id}` ? "drop-after" : undefined;
 
-function EntryRow({ entry, depth, selected, onSelect, attrs, drop, t }: EntryRowProps) {
+function EntryRow({ entry, depth, selected, onSelect, attrs, drop, color, t }: EntryRowProps) {
   const cls = ["node", selected ? "selected" : "", entry.enabled ? "" : "disabled", drop ?? ""].join(" ");
   const { draggable, ...rest } = attrs; // drag from the name: beside it = box selection
   return (
     <div className={cls} style={{ paddingLeft: 6 + depth * 16 + 18 }} data-key={`e${entry.id}`} {...rest}>
-      <button className="label" draggable={draggable} onClick={() => onSelect({ kind: "entry", id: entry.id })}>
+      <button className="label" style={color ? ({ "--phrase": color } as CSSProperties) : undefined} draggable={draggable} onClick={() => onSelect({ kind: "entry", id: entry.id })}>
         {PhraseIcon}
         <span className="name">{entry.name || t("unnamed")}</span>
       </button>
@@ -1223,6 +1236,7 @@ type EditorProps = {
   draft: Draft;
   setDraft: Dispatch<SetStateAction<Draft | null>>;
   folderOptions: FolderOption[];
+  folderColor: string; // css colour of the phrase's folder icon
   nameRef: RefObject<HTMLInputElement>;
   entries: Entry[];
   readOnly: boolean;
@@ -1253,7 +1267,7 @@ const FIELD_TEMPLATES: [Key, Key][] = [
   ["fieldDate", "fieldDateLabel"],
 ];
 
-function Editor({ draft, setDraft, folderOptions, readOnly, nameRef, entries, t }: EditorProps) {
+function Editor({ draft, setDraft, folderOptions, folderColor, readOnly, nameRef, entries, t }: EditorProps) {
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   // Other phrases with the same abbreviation / shortcut: typing it opens a menu to pick one.
   const sharing = (key: "trigger" | "hotkey") => {
@@ -1337,6 +1351,17 @@ function Editor({ draft, setDraft, folderOptions, readOnly, nameRef, entries, t 
             {folderOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
           </select>
         </label>
+      </div>
+      <div className="field">
+        <span>{t("phraseColor")}</span>
+        <label className="check">
+          <input type="checkbox" checked={draft.color === "folder"} onChange={(e) => set("color", e.target.checked ? "folder" : "")} />
+          {t("phraseColorFolder")}
+          <span className="dot" style={{ background: folderColor }} />
+        </label>
+        {draft.color === "folder" ? null : (
+          <ColorPicker value={draft.color} special={[["", "var(--muted)", t("phraseColorDefault")]]} onChange={(c) => set("color", c)} t={t} />
+        )}
       </div>
       <div className="row checks">
         <label className="check">

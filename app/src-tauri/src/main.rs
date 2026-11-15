@@ -71,6 +71,9 @@ struct EntryDto {
     case_sensitive: bool,
     enabled: bool,
     hotkey: String,
+    /// "" = default, "folder" = same as its folder, or "#rrggbb"
+    #[serde(default)]
+    color: String,
     #[serde(default)]
     uses: i64,
     /// Part of a library someone shared with this user: read-only.
@@ -114,6 +117,9 @@ struct Settings {
     /// Emails that see this user's phrases (read-only) when they sign in to Phrase X.
     #[serde(default)]
     share_with: Vec<String>,
+    /// "system" (follow Windows), "light" or "dark".
+    #[serde(default)]
+    theme: String,
 }
 
 #[derive(Serialize)]
@@ -164,8 +170,14 @@ fn to_dto(e: Entry, uses: &HashMap<i64, i64>) -> EntryDto {
         case_sensitive: e.case_sensitive,
         enabled: e.enabled,
         hotkey: e.hotkey.unwrap_or_default(),
+        color: e.color.unwrap_or_default(),
         shared: false,
     }
+}
+
+/// "" (default), a "#rrggbb" colour, or "folder" when `follow` is allowed (phrases only).
+fn valid_color(c: &str, follow: bool) -> bool {
+    c.is_empty() || (follow && c == "folder") || (c.len() == 7 && c.starts_with('#') && c[1..].chars().all(|x| x.is_ascii_hexdigit()))
 }
 
 fn load_settings(app: &AppHandle, store: &Store) -> Settings {
@@ -183,6 +195,10 @@ fn load_settings(app: &AppHandle, store: &Store) -> Settings {
             _ => "uses".into(),
         },
         share_with: emails(&get("share_with")),
+        theme: match get("theme").as_str() {
+            t @ ("light" | "dark") => t.into(),
+            _ => "system".into(),
+        },
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
         run_as_admin: get("run_as_admin") == "on",
         excluded_apps: get("excluded_apps").lines().map(str::to_string).filter(|s| !s.is_empty()).collect(),
@@ -559,6 +575,9 @@ fn save_entry(app: AppHandle, state: State<AppState>, entry: EntryDto) -> Res<i6
     if !hotkey.is_empty() && hotkey.parse::<Shortcut>().is_err() {
         return Err("invalid_hotkey".into());
     }
+    if !valid_color(&entry.color, true) {
+        return Err("invalid_color".into());
+    }
     let store = state.store.lock().unwrap();
     own_only(&store, &[entry.id], &[entry.folder_id])?;
     let trigger = entry.trigger.trim();
@@ -573,6 +592,7 @@ fn save_entry(app: AppHandle, state: State<AppState>, entry: EntryDto) -> Res<i6
             case_sensitive: entry.case_sensitive,
             enabled: entry.enabled,
             hotkey: (!hotkey.is_empty()).then_some(hotkey),
+            color: (!entry.color.is_empty()).then_some(entry.color),
         })
         .map_err(err)?;
     let (failed, _, _) = reload(&app, &store)?;
@@ -594,13 +614,30 @@ fn reorder_entries(app: AppHandle, state: State<AppState>, ids: Vec<i64>) -> Res
 /// Folder colour: a CSS hex colour, or empty for the default.
 #[tauri::command]
 fn set_folder_color(app: AppHandle, state: State<AppState>, id: i64, color: String) -> Res<()> {
-    let ok = color.is_empty() || (color.len() == 7 && color.starts_with('#') && color[1..].chars().all(|c| c.is_ascii_hexdigit()));
-    if !ok {
+    if !valid_color(&color, false) {
         return Err("invalid_color".into());
     }
     let store = state.store.lock().unwrap();
     own_only(&store, &[], &[Some(id)])?;
     store.set_folder_color(id, (!color.is_empty()).then_some(color.as_str())).map_err(err)?;
+    reload(&app, &store).map(drop)
+}
+
+/// "Applica a tutto il contenuto": subfolders take this folder's colour, phrases follow their folder.
+/// Each item can still be given its own colour afterwards.
+#[tauri::command]
+fn apply_folder_color(app: AppHandle, state: State<AppState>, id: i64) -> Res<()> {
+    let store = state.store.lock().unwrap();
+    own_only(&store, &[], &[Some(id)])?;
+    let folders = store.folders().map_err(err)?;
+    let color = folders.iter().find(|f| f.id == id).ok_or("folder_missing")?.color.clone();
+    let keep = subtree(&folders.iter().map(|f| (f.id, f.parent_id)).collect::<Vec<_>>(), id);
+    for f in folders.iter().filter(|f| f.id != id && keep.contains(&f.id)) {
+        store.set_folder_color(f.id, color.as_deref()).map_err(err)?;
+    }
+    for e in store.entries().map_err(err)?.iter().filter(|e| e.folder_id.is_some_and(|f| keep.contains(&f))) {
+        store.set_entry_color(e.id, Some("folder")).map_err(err)?;
+    }
     reload(&app, &store).map(drop)
 }
 
@@ -704,6 +741,8 @@ fn save_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> 
     store.set_setting("fix_double_caps", if settings.fix_double_caps { "on" } else { "off" }).map_err(err)?;
     store.set_setting("capitalize_sentences", if settings.capitalize_sentences { "on" } else { "off" }).map_err(err)?;
     store.set_setting("share_with", &emails(&settings.share_with.join("\n")).join("\n")).map_err(err)?;
+    let theme = settings.theme.as_str();
+    store.set_setting("theme", if matches!(theme, "light" | "dark") { theme } else { "system" }).map_err(err)?;
     let sort = settings.popup_sort.as_str();
     store.set_setting("popup_sort", if matches!(sort, "name" | "tree") { sort } else { "uses" }).map_err(err)?;
     if !settings.clip_history {
@@ -956,6 +995,7 @@ fn import_phrase(store: &mut Store, report: &mut ImportReport, folder: Option<i6
         enabled: p.enabled,
         // shortcuts are machine-specific: only kept when restoring from the trash
         hotkey: Some(p.hotkey).filter(|h| keep_hotkey && !h.is_empty()),
+        color: Some(p.color).filter(|c| valid_color(c, true) && !c.is_empty()),
     };
     store.save(&e).map_err(err)?;
     report.phrases += 1;
@@ -1042,7 +1082,7 @@ fn import_data(app: AppHandle, state: State<AppState>, content: String, file_nam
                 }
                 let p = EntryDto {
                     id: 0, folder_id: None, name: cols[0].clone(), trigger: cols[1].clone(), body: cols[2].clone(),
-                    immediate: true, case_sensitive: false, enabled: true, hotkey: String::new(), uses: 0, shared: false,
+                    immediate: true, case_sensitive: false, enabled: true, hotkey: String::new(), color: String::new(), uses: 0, shared: false,
                 };
                 import_phrase(&mut store, &mut report, root, p, false)?;
             }
@@ -1700,7 +1740,7 @@ fn main() {
             recording: AtomicBool::new(false),
         })
         .invoke_handler(tauri::generate_handler![
-            library, save_entry, delete_entry, add_folder, rename_folder, set_folder_hotkey, reorder_entries, sort_folder, paste_items, set_folder_color, move_folder, delete_folder, set_paused,
+            library, save_entry, delete_entry, add_folder, rename_folder, set_folder_hotkey, reorder_entries, sort_folder, paste_items, set_folder_color, apply_folder_color, move_folder, delete_folder, set_paused,
             settings, save_settings, running_apps, popup_insert, popup_hide, form_pending, form_submit,
             clips, clip_insert, clip_delete, clip_clear, clip_to_phrase, export_data, import_data, open_backups, install_autocorrect,
             trash, trash_restore, trash_delete, trash_clear, choice_pending, choice_pick, set_no_expand, set_recording_hotkey,

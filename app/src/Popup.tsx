@@ -4,6 +4,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { api, type Clip, type Entry, type Folder, type Lang, type Settings } from "./api";
 import { resolveLang, translator } from "./i18n";
 import { PhraseIcon } from "./icons";
+import { applyTheme } from "./theme";
 
 type Item = Entry & { folder: string };
 /** phrases/clips = search popup; choose = several phrases share what was typed, pick one. */
@@ -77,6 +78,7 @@ export function Popup() {
     );
     setClips(history);
     setLang(resolveLang(settings.lang));
+    applyTheme(settings.theme);
   }
 
   useEffect(() => {

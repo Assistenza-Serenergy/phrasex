@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, type FormField, type Lang } from "./api";
 import { resolveLang, translator } from "./i18n";
+import { applyTheme } from "./theme";
 
 type Values = Record<string, string | boolean>;
 
@@ -43,7 +44,10 @@ export function FormWindow() {
     const load = (f: FormField[] | null) => {
       setFields(f);
       setValues(f ? initialValues(f) : {});
-      void api.settings().then((s) => setLang(resolveLang(s.lang)));
+      void api.settings().then((s) => {
+        setLang(resolveLang(s.lang));
+        applyTheme(s.theme);
+      });
     };
     void api.formPending().then(load);
     const un = listen<FormField[]>("form-request", (ev) => load(ev.payload));

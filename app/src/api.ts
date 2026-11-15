@@ -12,6 +12,7 @@ export type Entry = {
   caseSensitive: boolean;
   enabled: boolean;
   hotkey: string;
+  color: string; // "" default, "folder" = same as its folder, or "#rrggbb"
   uses: number;
   shared: boolean;
 };
@@ -29,6 +30,7 @@ export type Settings = {
   capitalizeSentences: boolean;
   popupSort: "uses" | "name" | "tree";
   shareWith: string[];
+  theme: "system" | "light" | "dark";
 };
 export type SyncStatus = { configured: boolean; email: string; name: string; last: string; error: string; shareError: string };
 export type Clip = { id: number; text: string; image: string }; // image = data: URL of a copied picture
@@ -52,6 +54,7 @@ export const api = {
   updateAvailable: () => invoke<string | null>("update_available"),
   updateInstall: () => invoke<void>("update_install"),
   setFolderColor: (id: number, color: string) => invoke<void>("set_folder_color", { id, color }),
+  applyFolderColor: (id: number) => invoke<void>("apply_folder_color", { id }),
   pasteItems: (folders: number[], entries: number[], target: number | null) => invoke<{ phrases: number; folders: number }>("paste_items", { folders, entries, target }),
   moveFolder: (id: number, parentId: number | null) => invoke<void>("move_folder", { id, parentId }),
   deleteFolder: (id: number) => invoke<void>("delete_folder", { id }),

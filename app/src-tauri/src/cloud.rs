@@ -483,6 +483,7 @@ mod tests {
             enabled: true,
             hotkey: None,
             position: None,
+            color: None,
             tags: vec![],
             updated_at: at.into(),
         }

@@ -174,7 +174,7 @@
   "clipHistoryTip": "Text copied from password managers is never saved.",
   "importTip": "CSV columns: description; abbreviation; text",
   "sharedTip": "A menu opens to pick the phrase.",
-  "folderHotkeyTip": "Opens the menu with this folder's phrases.",
+  "folderHotkeyTip": "Works for every phrase in the folder and its subfolders: pressing it opens a menu to pick one.",
   "settingsAccountTab": "Account and sharing",
   "copied": "{n} copied",
   "pasted": "Pasted",
@@ -187,5 +187,16 @@
   "updating": "Updating…",
   "updateTitle": "Install version {v}",
   "deleteFolder": "Delete folder",
-  "folderColorCustom": "Other colour…"
+  "folderColorCustom": "Other colour…",
+  "theme": "Theme",
+  "themeSystem": "Same as Windows",
+  "themeLight": "Light",
+  "themeDark": "Dark",
+  "folderHotkey": "Folder shortcut",
+  "applyColor": "Apply to everything in the folder",
+  "applyColorTip": "Subfolders and phrases take this colour. You can still change them one by one.",
+  "colorApplied": "Colour applied",
+  "phraseColor": "Colour",
+  "phraseColorFolder": "Same as the folder",
+  "phraseColorDefault": "Grey (default)"
 }

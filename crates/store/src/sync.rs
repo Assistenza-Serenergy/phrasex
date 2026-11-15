@@ -22,7 +22,7 @@ pub struct Library {
 
 /// Settings that follow the user to every PC. Machine-specific ones (autostart, run as admin) stay local.
 pub const SYNCED_SETTINGS: &[&str] =
-    &["lang", "popup_hotkey", "clip_hotkey", "clip_history", "fix_double_caps", "capitalize_sentences", "popup_sort", "share_with", "excluded_apps"];
+    &["lang", "popup_hotkey", "clip_hotkey", "clip_history", "fix_double_caps", "capitalize_sentences", "popup_sort", "share_with", "excluded_apps", "theme"];
 /// Local setting holding when the synced settings were last changed (the sync clock).
 pub const SETTINGS_STAMP: &str = "settings_updated_at";
 
@@ -57,6 +57,8 @@ pub struct SyncSnippet {
     pub hotkey: Option<String>,
     #[serde(default)] // documents written before manual order
     pub position: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] // documents written before phrase colours
+    pub color: Option<String>,
     /// Always empty: tags are gone, kept so older versions can still read the document.
     #[serde(default)]
     pub tags: Vec<String>,
@@ -154,7 +156,7 @@ impl Store {
             .query_map([], |r| Ok(SyncFolder { uid: r.get(0)?, parent: r.get(1)?, name: r.get(2)?, updated_at: r.get(3)?, hotkey: r.get(4)?, color: r.get(5)? }))?
             .collect::<Result<_>>()?;
         let mut st = self.db.prepare(
-            "SELECT s.id, s.uid, f.uid, s.name, s.trigger, s.body, s.mode, s.case_sensitive, s.enabled, s.hotkey, s.updated_at, s.position
+            "SELECT s.id, s.uid, f.uid, s.name, s.trigger, s.body, s.mode, s.case_sensitive, s.enabled, s.hotkey, s.updated_at, s.position, s.color
              FROM snippet s LEFT JOIN folder f ON f.id = s.folder_id WHERE s.shared IS NULL ORDER BY s.uid",
         )?;
         let rows: Vec<(i64, SyncSnippet)> = st
@@ -172,6 +174,7 @@ impl Store {
                         enabled: r.get(8)?,
                         hotkey: r.get(9)?,
                         position: r.get(11)?,
+                        color: r.get(12)?,
                         tags: vec![],
                         updated_at: r.get(10)?,
                     },
@@ -237,11 +240,11 @@ impl Store {
             let folder = s.folder.as_deref().and_then(|u| ids.get(u)).copied();
             let mode = if s.immediate { "immediate" } else { "word" };
             tx.execute(
-                "INSERT INTO snippet (uid, folder_id, name, trigger, body, mode, case_sensitive, enabled, hotkey, updated_at, position)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                "INSERT INTO snippet (uid, folder_id, name, trigger, body, mode, case_sensitive, enabled, hotkey, updated_at, position, color)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                  ON CONFLICT(uid) DO UPDATE SET folder_id = ?2, name = ?3, trigger = ?4, body = ?5, mode = ?6,
-                   case_sensitive = ?7, enabled = ?8, hotkey = ?9, updated_at = ?10, position = ?11",
-                params![s.uid, folder, s.name, s.trigger, s.body, mode, s.case_sensitive, s.enabled, s.hotkey, s.updated_at, s.position],
+                   case_sensitive = ?7, enabled = ?8, hotkey = ?9, updated_at = ?10, position = ?11, color = ?12",
+                params![s.uid, folder, s.name, s.trigger, s.body, mode, s.case_sensitive, s.enabled, s.hotkey, s.updated_at, s.position, s.color],
             )?;
         }
         // everything not in `lib` goes: phrases first, so no folder cascade can reach a live one
@@ -285,8 +288,8 @@ impl Store {
             for s in &sh.library.snippets {
                 let folder = s.folder.as_deref().and_then(|u| ids.get(u)).copied().unwrap_or(root);
                 tx.execute(
-                    "INSERT INTO snippet (uid, folder_id, name, trigger, body, mode, case_sensitive, enabled, updated_at, shared, position)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    "INSERT INTO snippet (uid, folder_id, name, trigger, body, mode, case_sensitive, enabled, updated_at, shared, position, color)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                     params![
                         format!("s:{}:{}", sh.owner, s.uid),
                         folder,
@@ -298,7 +301,8 @@ impl Store {
                         s.enabled,
                         s.updated_at,
                         sh.owner,
-                        s.position
+                        s.position,
+                        s.color
                     ],
                 )?;
             }
@@ -427,7 +431,7 @@ mod tests {
         let f = pc1.add_folder(None, "Lavoro").unwrap();
         pc1.set_folder_hotkey(f, Some("Ctrl+Alt+L")).unwrap();
         pc1.set_folder_color(f, Some("#2f7de1")).unwrap();
-        let mut keep = Entry::new(Some(f), "keep", "k", "v1");
+        let mut keep = Entry { color: Some("folder".into()), ..Entry::new(Some(f), "keep", "k", "v1") };
         keep.id = pc1.save(&keep).unwrap();
         pc1.save(&Entry::new(Some(f), "tagged", "t", "x")).unwrap();
         let gone = pc1.save(&Entry::new(None, "gone", "g", "x")).unwrap();
@@ -439,6 +443,7 @@ mod tests {
         assert_eq!(pc2.folders().unwrap()[0].name, "Lavoro");
         assert_eq!(pc2.folders().unwrap()[0].hotkey.as_deref(), Some("Ctrl+Alt+L"), "folder shortcut synced");
         assert_eq!(pc2.folders().unwrap()[0].color.as_deref(), Some("#2f7de1"), "folder colour synced");
+        assert_eq!(pc2.entries().unwrap().iter().find(|e| e.name == "keep").unwrap().color.as_deref(), Some("folder"), "phrase colour synced");
 
         // PC1 deletes "gone"; later PC2 edits "keep" and adds a phrase
         std::thread::sleep(std::time::Duration::from_millis(5));

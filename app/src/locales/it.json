@@ -174,7 +174,7 @@
   "clipHistoryTip": "Non salva quello che copi dai gestori di password.",
   "importTip": "CSV con le colonne: descrizione; abbreviazione; testo",
   "sharedTip": "Si apre un menu per scegliere la frase.",
-  "folderHotkeyTip": "Apre il menu con le frasi di questa cartella.",
+  "folderHotkeyTip": "Vale per tutte le frasi della cartella e delle sottocartelle: premendola si apre un menu per sceglierne una.",
   "settingsAccountTab": "Account e condivisione",
   "copied": "{n} copiati",
   "pasted": "Incollato",
@@ -187,5 +187,16 @@
   "updating": "Aggiornamento…",
   "updateTitle": "Installa la versione {v}",
   "deleteFolder": "Elimina cartella",
-  "folderColorCustom": "Altro colore…"
+  "folderColorCustom": "Altro colore…",
+  "theme": "Tema",
+  "themeSystem": "Come Windows",
+  "themeLight": "Chiaro",
+  "themeDark": "Scuro",
+  "folderHotkey": "Scorciatoia della cartella",
+  "applyColor": "Applica a tutto il contenuto della cartella",
+  "applyColorTip": "Sottocartelle e frasi prendono questo colore. Poi puoi cambiarle una per una.",
+  "colorApplied": "Colore applicato",
+  "phraseColor": "Colore",
+  "phraseColorFolder": "Come la cartella",
+  "phraseColorDefault": "Grigio (predefinito)"
 }
