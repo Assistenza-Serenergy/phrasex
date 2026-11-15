@@ -32,7 +32,7 @@ GitHub Pages from /docs (website + privacy). Current version 0.2.0, published as
 - Website screenshots: `.claude/launch.json` "shots" = the UI with a fake backend (app/vite.shots.config.ts,
   app/shots/*); headless Chrome `--screenshot` (popup through shots/frame.html: headless has a minimum width).
 - Python edit scripts: heredocs in Git Bash mangle backslashes; write the script with the Write tool instead.
-- Local only, gitignored: Installer/ and "Installa Phrase X.exe" (old 0.1.0 handout), google-oauth.json, firebase.json.
+- Local only, gitignored: google-oauth.json, firebase.json. Installers for other people: only the GitHub Releases.
 
 ## Code map
 - `crates/engine` — typing buffer, triggers (case adapt, undo data; `reload` in main.rs forces every phrase to
