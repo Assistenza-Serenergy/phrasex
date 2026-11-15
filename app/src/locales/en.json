@@ -185,5 +185,7 @@
   "folderColorDefault": "Yellow (default)",
   "update": "Update",
   "updating": "Updating…",
-  "updateTitle": "Install version {v}"
+  "updateTitle": "Install version {v}",
+  "deleteFolder": "Delete folder",
+  "folderColorCustom": "Other colour…"
 }

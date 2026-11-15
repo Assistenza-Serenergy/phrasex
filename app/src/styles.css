@@ -275,3 +275,8 @@ button.paused-badge { color: var(--danger); border-color: var(--danger); }
 .swatch:hover:not(:disabled) { background: var(--folder); filter: brightness(1.1); }
 .swatch.on { box-shadow: 0 0 0 2px var(--text); }
 .clip-img { display: block; max-width: 100%; max-height: 90px; border-radius: 4px; border: 1px solid var(--border); background: repeating-conic-gradient(var(--hover) 0 25%, transparent 0 50%) 0 0 / 12px 12px; }
+.swatch.custom { position: relative; cursor: pointer; background: conic-gradient(#e33, #ec3, #3c5, #3cc, #36e, #c3c, #e33); }
+.swatch.custom.on { background: var(--folder); }
+.swatch.custom input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; padding: 0; border: 0; }
+.editor button.danger { color: var(--danger); }
+.editor button.danger .icon { color: currentColor; }

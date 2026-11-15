@@ -21,7 +21,7 @@ type MenuItem = [label: string, run: () => unknown, danger?: boolean] | null;
 type RowAttrs = (item: Sel, dropFolder?: number | null) => HTMLAttributes<HTMLDivElement>;
 const DRAG_TYPE = "application/x-phrasex";
 /** Folder colours ("" = default yellow); mid tones that read on both themes. */
-const FOLDER_COLORS = ["", "#d64545", "#e8833a", "#3fa45b", "#2f7de1", "#8a5cd6", "#d14f9b", "#8a8a8a"];
+const FOLDER_COLORS = ["", "#d64545", "#e8833a", "#3fa45b", "#2f7de1", "#8a5cd6", "#d14f9b", "#8a8a8a", "#ffffff"];
 const tint = (color: string) => (color ? ({ "--folder": color } as CSSProperties) : undefined);
 
 const toDraft = (e: Entry): Draft => ({ ...e });
@@ -664,7 +664,7 @@ export default function App() {
     }
     const folderId = lib?.entries.find((e) => e.id === target.id)?.folderId ?? null;
     return [
-      mi("ctxNewPhraseHere", () => newEntry(folderId)),
+      mi("newEntry", () => newEntry(folderId)), // on a phrase: lands next to it, in its folder
       mi("ctxNewRootFolder", () => newFolder(null)),
       null,
       mi("ctxRename", () => rename(target)),
@@ -945,11 +945,26 @@ export default function App() {
                       onClick={() => void api.setFolderColor(selectedFolder.id, c).then(refresh).catch(fail)}
                     />
                   ))}
+                  {/* any colour: the Windows colour dialog */}
+                  <label
+                    className={FOLDER_COLORS.includes(selectedFolder.color) ? "swatch custom" : "swatch custom on"}
+                    title={t("folderColorCustom")}
+                    style={FOLDER_COLORS.includes(selectedFolder.color) ? undefined : tint(selectedFolder.color)}
+                  >
+                    <input
+                      type="color"
+                      aria-label={t("folderColorCustom")}
+                      value={selectedFolder.color || "#e0a526"}
+                      onChange={(e) => void api.setFolderColor(selectedFolder.id, e.target.value).then(refresh).catch(fail)}
+                    />
+                  </label>
                 </div>
               </div>
               <div className="row end">
                 {readOnly ? <span className="muted">{t("readOnly")}</span> : (
                   <>
+                    <button type="button" className="danger" onClick={() => void remove({ kind: "folder", id: selectedFolder.id })}>{TrashIcon}{t("deleteFolder")}</button>
+                    <span className="spacer" />
                     <button type="button" onClick={() => void sortFolder(selectedFolder.id)}>{t("ctxSortAZ")}</button>
                   </>
                 )}
